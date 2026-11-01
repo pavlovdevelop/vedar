@@ -47,15 +47,14 @@ public sealed class PiperSpeechSynthesizer : ISpeechSynthesizer
             _tts?.Dispose();
             _tts = null;
             var voiceId = _settings.Current.Voice.VoiceId;
-            var onnx = _resolveModel(Path.Combine("piper", voiceId, voiceId + ".onnx"))
+            var voiceDir = _resolveModel(Path.Combine("piper", voiceId))
                 ?? throw new FileNotFoundException($"Piper voice '{voiceId}' is not installed.");
-            var json = onnx + ".json";
             var espeak = _resolveModel(Path.Combine("piper", "espeak-ng-data"))
                 ?? throw new DirectoryNotFoundException("espeak-ng-data is not installed.");
 
             await Task.Run(() =>
             {
-                var prepared = PiperModelPreparer.Prepare(onnx, json, espeak, _cacheDir);
+                var prepared = PiperModelPreparer.PrepareVoice(voiceDir, voiceId, espeak, _cacheDir);
                 var config = new OfflineTtsConfig();
                 config.Model.Vits.Model = prepared.ModelPath;
                 config.Model.Vits.Tokens = prepared.TokensPath;

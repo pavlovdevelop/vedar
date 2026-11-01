@@ -4,7 +4,7 @@
     <sys:Double x:Key="Vedar.FontSize">18</sys:Double>
     <sys:Double x:Key="Vedar.FontSizeLarge">26</sys:Double>
     <sys:Double x:Key="Vedar.FontSizeHuge">34</sys:Double>
-    <FontFamily x:Key="Vedar.Font">Segoe UI</FontFamily>
+    <FontFamily x:Key="Vedar.Font">Segoe UI, Tahoma, Arial</FontFamily>
 
     <!-- Very visible keyboard focus: thick yellow frame (system highlight in High Contrast). -->
     <Style x:Key="Vedar.FocusVisual">

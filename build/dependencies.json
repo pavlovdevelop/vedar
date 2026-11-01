@@ -1,0 +1,118 @@
+{
+  "comment": "All build downloads are pinned to immutable URLs and verified with SHA-256 before use.",
+  "models": [
+    {
+      "path": "whisper/ggml-small-q5_1.bin",
+      "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q5_1.bin",
+      "sha256": "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+      "size": 190085487,
+      "license": "MIT (OpenAI Whisper weights, ggml conversion by whisper.cpp)",
+      "purpose": "Speech recognition (default)"
+    },
+    {
+      "path": "whisper/ggml-base-q5_1.bin",
+      "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q5_1.bin",
+      "sha256": "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
+      "size": 59707625,
+      "license": "MIT (OpenAI Whisper weights, ggml conversion by whisper.cpp)",
+      "purpose": "Fast wake-word scan"
+    },
+    {
+      "path": "piper/bg_BG-dimitar-medium/bg_BG-dimitar-medium.onnx",
+      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/b4e358ffcb232591bf73a540e70f7de528e4174a/bg/bg_BG/dimitar/medium/bg_BG-dimitar-medium.onnx",
+      "sha256": "4972fe764468e8501416407ad81662de94cc6c9cdc680fcf807daef04e319f13",
+      "size": 63221984,
+      "license": "Piper voice; dataset CC0 (see MODEL_CARD)",
+      "purpose": "Bulgarian male voice"
+    },
+    {
+      "path": "piper/bg_BG-dimitar-medium/bg_BG-dimitar-medium.onnx.json",
+      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/b4e358ffcb232591bf73a540e70f7de528e4174a/bg/bg_BG/dimitar/medium/bg_BG-dimitar-medium.onnx.json",
+      "sha256": "ec9a9abdd17384d3db225e83085b2f68b790b112f058417c3a8a2ac58b79e7f0",
+      "size": 5123,
+      "license": "Piper voice",
+      "purpose": "Voice configuration"
+    },
+    {
+      "path": "piper/bg_BG-dimitar-medium/MODEL_CARD",
+      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/b4e358ffcb232591bf73a540e70f7de528e4174a/bg/bg_BG/dimitar/medium/MODEL_CARD",
+      "sha256": "f7d396772659ed6e277171d19d23e57c502878d01c90d7c51ad6105ac05d2b8e",
+      "size": 282,
+      "license": "Piper voice",
+      "purpose": "Model card"
+    },
+    {
+      "path": "piper/espeak-ng-data/phondata",
+      "url": "https://huggingface.co/csukuangfj/vits-piper-en_US-amy-low/resolve/76da6ca287517a49f58b943c4c4fdb0c1e94d61f/espeak-ng-data/phondata",
+      "sha256": "4e0288957874029a8c3c9f41a8f517ad4bf18127046decbdd4b9d1d6807ce3a3",
+      "size": 550424,
+      "license": "GPL-3.0-or-later (espeak-ng data)",
+      "purpose": "Bulgarian phonemization data for Piper"
+    },
+    {
+      "path": "piper/espeak-ng-data/phondata-manifest",
+      "url": "https://huggingface.co/csukuangfj/vits-piper-en_US-amy-low/resolve/76da6ca287517a49f58b943c4c4fdb0c1e94d61f/espeak-ng-data/phondata-manifest",
+      "sha256": "7b387af0702c7cf0b61f0bead68feded0bd8e1620729b0b252e76acbc30d3813",
+      "size": 21821,
+      "license": "GPL-3.0-or-later (espeak-ng data)",
+      "purpose": "Bulgarian phonemization data for Piper"
+    },
+    {
+      "path": "piper/espeak-ng-data/phonindex",
+      "url": "https://huggingface.co/csukuangfj/vits-piper-en_US-amy-low/resolve/76da6ca287517a49f58b943c4c4fdb0c1e94d61f/espeak-ng-data/phonindex",
+      "sha256": "3ca7b8fa3b42624e4b0f152707e7a39245fce569aa99ea47c055d9e622fcf0c4",
+      "size": 39074,
+      "license": "GPL-3.0-or-later (espeak-ng data)",
+      "purpose": "Bulgarian phonemization data for Piper"
+    },
+    {
+      "path": "piper/espeak-ng-data/phontab",
+      "url": "https://huggingface.co/csukuangfj/vits-piper-en_US-amy-low/resolve/76da6ca287517a49f58b943c4c4fdb0c1e94d61f/espeak-ng-data/phontab",
+      "sha256": "886f3fa402cb0ba73d483aa8ad000af47a6b7cc06293c75a97913fba68a530f6",
+      "size": 55796,
+      "license": "GPL-3.0-or-later (espeak-ng data)",
+      "purpose": "Bulgarian phonemization data for Piper"
+    },
+    {
+      "path": "piper/espeak-ng-data/intonations",
+      "url": "https://huggingface.co/csukuangfj/vits-piper-en_US-amy-low/resolve/76da6ca287517a49f58b943c4c4fdb0c1e94d61f/espeak-ng-data/intonations",
+      "sha256": "3f8af65fd3eda9759a10f021d61361c120871f463515229c925995c7f90918cc",
+      "size": 2040,
+      "license": "GPL-3.0-or-later (espeak-ng data)",
+      "purpose": "Bulgarian phonemization data for Piper"
+    },
+    {
+      "path": "piper/espeak-ng-data/bg_dict",
+      "url": "https://huggingface.co/csukuangfj/vits-piper-en_US-amy-low/resolve/76da6ca287517a49f58b943c4c4fdb0c1e94d61f/espeak-ng-data/bg_dict",
+      "sha256": "8fa3adec8e18a3e695b2bbea1d4780182e17222d8b9f8da9908a237828f6b063",
+      "size": 87051,
+      "license": "GPL-3.0-or-later (espeak-ng data)",
+      "purpose": "Bulgarian phonemization data for Piper"
+    },
+    {
+      "path": "piper/espeak-ng-data/lang/zls/bg",
+      "url": "https://huggingface.co/csukuangfj/vits-piper-en_US-amy-low/resolve/76da6ca287517a49f58b943c4c4fdb0c1e94d61f/espeak-ng-data/lang/zls/bg",
+      "sha256": "9b91accccb0d53bb2a7bf21922846ba58c74bc082ba71ae32bf12cb0d092f853",
+      "size": 111,
+      "license": "GPL-3.0-or-later (espeak-ng data)",
+      "purpose": "Bulgarian phonemization data for Piper"
+    }
+  ],
+  "vcRedist": {
+    "url": "https://download.visualstudio.microsoft.com/download/pr/990c720a-46ce-4dc7-87b9-c2eb615d34b9/CC0FF0EB1DC3F5188AE6300FAEF32BF5BEEBA4BDD6E8E445A9184072096B713B/VC_redist.x64.exe",
+    "sha256": "cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b",
+    "dlls": [
+      "msvcp140.dll",
+      "vcruntime140.dll",
+      "vcruntime140_1.dll",
+      "vcomp140.dll"
+    ],
+    "comment": "Microsoft Visual C++ 2015-2022 x64 runtime (needed by whisper.cpp), deployed app-locally so no administrator rights are required."
+  },
+  "innoSetup": {
+    "version": "6.7.3",
+    "nupkgUrl": "https://api.nuget.org/v3-flatcontainer/tools.innosetup/6.7.3/tools.innosetup.6.7.3.nupkg",
+    "sha256": "f780898e402ff80612cc8d9fcb8c6e02932bd1cb4c900ffdaa31f9341cfb49f4",
+    "comment": "Unofficial NuGet packaging (Vaclav Slavik) of the official Inno Setup binaries, which are Authenticode-signed by Pyrsys B.V. Used only when Inno Setup is not installed."
+  }
+}

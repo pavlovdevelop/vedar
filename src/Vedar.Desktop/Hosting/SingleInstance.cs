@@ -8,12 +8,14 @@ public sealed class SingleInstance : IDisposable
 {
     private readonly Mutex _mutex;
     private readonly EventWaitHandle _showSignal;
+    private readonly EventWaitHandle _exitSignal;
     private readonly CancellationTokenSource _cts = new();
 
-    private SingleInstance(Mutex mutex, EventWaitHandle showSignal, bool isFirst)
+    private SingleInstance(Mutex mutex, EventWaitHandle showSignal, EventWaitHandle exitSignal, bool isFirst)
     {
         _mutex = mutex;
         _showSignal = showSignal;
+        _exitSignal = exitSignal;
         IsFirstInstance = isFirst;
     }
 
@@ -24,19 +26,35 @@ public sealed class SingleInstance : IDisposable
         var id = "VEDAR-" + Environment.UserName + (suffix is null ? string.Empty : "-" + suffix);
         var mutex = new Mutex(initiallyOwned: true, @"Local\" + id, out var createdNew);
         var signal = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\" + id + "-show");
-        return new SingleInstance(mutex, signal, createdNew);
+        var exit = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\" + id + "-exit");
+        return new SingleInstance(mutex, signal, exit, createdNew);
     }
 
     public void SignalFirstInstance() => _showSignal.Set();
 
-    public void ListenForShowRequests(Action onShow)
+    /// <summary>Asks the running instance to exit (used by the installer before an upgrade: VEDAR.exe --exit).</summary>
+    public void SignalExit() => _exitSignal.Set();
+
+    public void ListenForShowRequests(Action onShow, Action? onExit = null)
     {
         var thread = new Thread(() =>
         {
-            var handles = new[] { _showSignal, _cts.Token.WaitHandle };
-            while (WaitHandle.WaitAny(handles) == 0)
+            var handles = new WaitHandle[] { _showSignal, _exitSignal, _cts.Token.WaitHandle };
+            while (true)
             {
-                onShow();
+                var index = WaitHandle.WaitAny(handles);
+                if (index == 0)
+                {
+                    onShow();
+                }
+                else if (index == 1)
+                {
+                    onExit?.Invoke();
+                }
+                else
+                {
+                    return;
+                }
             }
         })
         { IsBackground = true, Name = "VEDAR single instance" };
@@ -59,6 +77,7 @@ public sealed class SingleInstance : IDisposable
 
         _mutex.Dispose();
         _showSignal.Dispose();
+        _exitSignal.Dispose();
         _cts.Dispose();
     }
 }

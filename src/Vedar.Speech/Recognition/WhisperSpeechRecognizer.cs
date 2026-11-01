@@ -190,7 +190,8 @@ public sealed class WhisperSpeechRecognizer : ISpeechRecognizer
             .WithThreads(Threads())
             .WithNoContext()
             .WithSingleSegment()
-            .WithTemperature(0f);
+            .WithTemperature(0f)
+            .WithProbabilities();
         if (!string.IsNullOrWhiteSpace(prompt))
         {
             builder = builder.WithPrompt(prompt);

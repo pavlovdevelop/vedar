@@ -42,9 +42,14 @@ public partial class App : Application
         StartedInBackground = e.Args.Contains(AutoStartManager.BackgroundArgument, StringComparer.OrdinalIgnoreCase);
 
         _singleInstance = SingleInstance.Acquire();
-        if (!_singleInstance.IsFirstInstance)
+        var exitRequested = e.Args.Contains("--exit", StringComparer.OrdinalIgnoreCase);
+        if (!_singleInstance.IsFirstInstance || exitRequested)
         {
-            if (!StartedInBackground)
+            if (exitRequested)
+            {
+                _singleInstance.SignalExit();
+            }
+            else if (!StartedInBackground)
             {
                 _singleInstance.SignalFirstInstance();
             }
@@ -97,7 +102,10 @@ public partial class App : Application
             _hotkeys = new GlobalHotkeyService(_services.LoggerFactory.CreateLogger("Hotkeys"));
             _hotkeys.Pressed += (_, action) => OnHotkey(action);
             _mainViewModel.SetHotkeyFailures(RegisterHotkeys());
-            _singleInstance.ListenForShowRequests(() => Dispatcher.BeginInvoke(() => _mainWindow.BringToFront()));
+            _singleInstance.ListenForShowRequests(
+                () => Dispatcher.BeginInvoke(() => _mainWindow.BringToFront()),
+                () => Dispatcher.BeginInvoke(async () => await ExitAsync()));
+            SessionEnding += (_, _) => { if (_mainWindow is not null) { _mainWindow.AllowClose = true; } };
 
             var showWindow = !StartedInBackground && !(settings.General.StartMinimizedToTray && settings.General.FirstRunCompleted && e.Args.Contains("--minimized"));
             if (showWindow)

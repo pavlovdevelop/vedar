@@ -101,7 +101,7 @@ public sealed partial class WizardViewModel : ObservableObject
     {
         var stt = _services.Paths.FindModel(Path.Combine("whisper", _services.Settings.Current.Recognition.ModelFile));
         var voiceId = _services.Settings.Current.Voice.VoiceId;
-        var tts = _services.Paths.FindModel(Path.Combine("piper", voiceId, voiceId + ".onnx"));
+        var tts = _services.Paths.FindModel(Path.Combine("piper", voiceId, voiceId + ".onnx.json"));
         ModelsResult = stt is not null && tts is not null
             ? _loc.Format("wizard.models.ok", Path.GetFileName(stt), voiceId)
             : _loc.Format("wizard.models.missing", stt is null ? "Whisper" : "Piper " + voiceId);

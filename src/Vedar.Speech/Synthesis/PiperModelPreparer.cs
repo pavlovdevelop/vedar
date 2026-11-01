@@ -37,6 +37,33 @@ public static class PiperModelPreparer
     }
 
     /// <summary>
+    /// Prepares the voice in <paramref name="voiceDir"/>. The installer ships only the prepared model
+    /// (<c>{voice}.sherpa.onnx</c> + tokens.txt + config); a developer checkout has the original <c>{voice}.onnx</c>.
+    /// </summary>
+    public static PreparedPiperModel PrepareVoice(string voiceDir, string voiceId, string espeakDataDir, string cacheDir)
+    {
+        var json = Path.Combine(voiceDir, voiceId + ".onnx.json");
+        if (!File.Exists(json))
+        {
+            throw new FileNotFoundException("Piper voice configuration not found.", json);
+        }
+
+        var shipped = Path.Combine(voiceDir, voiceId + PreparedSuffix);
+        var tokens = Path.Combine(voiceDir, "tokens.txt");
+        if (File.Exists(shipped) && File.Exists(tokens))
+        {
+            if (!Directory.Exists(espeakDataDir))
+            {
+                throw new DirectoryNotFoundException($"espeak-ng data not found: {espeakDataDir}");
+            }
+
+            return new PreparedPiperModel(shipped, tokens, espeakDataDir, ReadConfig(json));
+        }
+
+        return Prepare(Path.Combine(voiceDir, voiceId + ".onnx"), json, espeakDataDir, cacheDir);
+    }
+
+    /// <summary>
     /// Returns a model ready for sherpa-onnx. Uses a pre-prepared sibling (shipped by the installer) when present,
     /// otherwise prepares a copy in <paramref name="cacheDir"/>.
     /// </summary>

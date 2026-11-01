@@ -30,6 +30,7 @@ public class IntentRecognitionTests
     [InlineData("Коя дата сме?", "date")]
     [InlineData("каква дата е днес", "date")]
     [InlineData("кажи ми датата", "date")]
+    [InlineData("Кое число сме днес?", "date")]
     [InlineData("Кой ден сме днес?", "dayOfWeek")]
     [InlineData("какъв ден е днес", "dayOfWeek")]
     // apps

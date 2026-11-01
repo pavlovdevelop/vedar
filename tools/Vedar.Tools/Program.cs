@@ -34,6 +34,15 @@ if (args.Length == 0)
     return 1;
 }
 
+// "@file.txt" reads the text argument from a UTF-8 file (avoids code page conversion of command lines, e.g. under Wine).
+for (int i = 1; i < args.Length; i++)
+{
+    if (args[i].StartsWith('@') && File.Exists(args[i][1..]))
+    {
+        args[i] = File.ReadAllText(args[i][1..], Encoding.UTF8).Trim();
+    }
+}
+
 var paths = new AppPaths(dataRoot: Path.Combine(Path.GetTempPath(), "vedar-tools"));
 Func<string, string?> resolve = paths.FindModel;
 var settings = new MemorySettings();
@@ -50,6 +59,14 @@ switch (args[0])
         PiperModelPreparer.WritePrepared(onnx, config, target, Path.Combine(outDir, "tokens.txt"));
         var meta = PiperModelPreparer.ReadMetadata(target);
         Console.WriteLine($"Prepared {target}: {string.Join(", ", meta.Select(kv => kv.Key + "=" + kv.Value))}");
+        return 0;
+    }
+
+    case "normalize":
+    {
+        var normalized = Vedar.Speech.Text.BulgarianTextNormalizer.Normalize(args[1]);
+        Console.WriteLine(normalized);
+        Console.WriteLine(string.Join(" ", normalized.Take(12).Select(c => ((int)c).ToString("X4", CultureInfo.InvariantCulture))));
         return 0;
     }
 

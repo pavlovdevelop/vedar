@@ -18,46 +18,39 @@ namespace Vedar.Tests.Windows;
 /// </summary>
 public class KeyboardAccessibilityTests
 {
-    private static void RunSta(Action action)
+    /// <summary>
+    /// WPF allows one Application per process and its resources belong to one thread, so every UI test runs on a
+    /// single shared STA dispatcher thread.
+    /// </summary>
+    private static readonly Lazy<Dispatcher> UiThread = new(() =>
     {
-        Exception? error = null;
+        Dispatcher? dispatcher = null;
+        using var ready = new ManualResetEventSlim();
         var thread = new Thread(() =>
         {
-            try
-            {
-                if (Application.Current is null)
-                {
-                    var app = new Vedar.Desktop.App();
-                    app.InitializeComponent();
-                }
-
-                action();
-            }
-            catch (Exception ex)
-            {
-                error = ex;
-            }
-            finally
-            {
-                Dispatcher.CurrentDispatcher.InvokeShutdown();
-            }
-        });
+            var app = new Vedar.Desktop.App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            app.InitializeComponent();
+            dispatcher = Dispatcher.CurrentDispatcher;
+            ready.Set();
+            Dispatcher.Run();
+        })
+        { IsBackground = true, Name = "WPF test UI thread" };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        thread.Join();
-        if (error is not null)
-        {
-            throw new Exception("UI test failed: " + error.Message, error);
-        }
-    }
+        ready.Wait();
+        return dispatcher!;
+    });
+
+    private static void RunSta(Action action) => UiThread.Value.Invoke(action);
 
     private static void ShowOffscreen(Window w)
     {
         w.WindowStartupLocation = WindowStartupLocation.Manual;
         w.Left = -20000;
         w.Top = -20000;
-        w.ShowActivated = false;
+        w.ShowActivated = true;
         w.Show();
+        w.Activate();
         w.UpdateLayout();
         Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
     }
