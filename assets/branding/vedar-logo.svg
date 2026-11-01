@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="150 100 954 954" role="img" aria-label="VEDAR">
+  <title>VEDAR</title>
+  <defs>
+    <linearGradient id="vBody" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#0B3E92"/>
+      <stop offset="1" stop-color="#031A4C"/>
+    </linearGradient>
+    <linearGradient id="arc" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#14D8FF"/>
+      <stop offset="0.5" stop-color="#00F2FF"/>
+      <stop offset="1" stop-color="#14C8FF"/>
+    </linearGradient>
+    <linearGradient id="bars" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#18E6FF"/>
+      <stop offset="1" stop-color="#0052C8"/>
+    </linearGradient>
+    <linearGradient id="river" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7AF8FF"/>
+      <stop offset="0.55" stop-color="#00F0FF"/>
+      <stop offset="1" stop-color="#00A8FF"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#vBody)" d="M 197 466 L 425 902 Q 470 985 545 985 L 740 985 Q 790 985 822 925 L 1057 466 Q 1075 420 1022 420 L 918 420 Q 892 420 878 446 A 250 272 0 0 1 378 446 Q 364 420 338 420 L 232 420 Q 180 420 197 466 Z"/>
+  <path fill="url(#river)" d="M 726 686 C 790 700 830 740 770 772 C 690 815 520 818 422 888 L 440 924 Q 470 985 528 985 C 560 905 680 835 772 800 C 840 770 830 712 726 686 Z"/>
+  <path fill="none" stroke="url(#arc)" stroke-width="40" stroke-linecap="round" d="M 382 398 Q 628 120 872 398"/>
+  <g fill="url(#bars)">
+    <rect x="437" y="474" width="30" height="46" rx="15"/>
+    <rect x="485" y="449" width="34" height="96" rx="17"/>
+    <rect x="544" y="411" width="34" height="172" rx="17"/>
+    <rect x="610" y="354" width="34" height="286" rx="17"/>
+    <rect x="676" y="411" width="34" height="172" rx="17"/>
+    <rect x="735" y="449" width="34" height="96" rx="17"/>
+    <rect x="787" y="474" width="30" height="46" rx="15"/>
+  </g>
+</svg>

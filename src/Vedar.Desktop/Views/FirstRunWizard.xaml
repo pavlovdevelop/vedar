@@ -1,0 +1,106 @@
+<Window x:Class="Vedar.Desktop.Views.FirstRunWizard"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:Vedar.Desktop.Localization"
+        Title="{l:Loc wizard.title}"
+        AutomationProperties.Name="{l:Loc wizard.title}"
+        Style="{StaticResource Vedar.Window}"
+        Width="860" Height="680" MinWidth="600" MinHeight="480"
+        WindowStartupLocation="CenterScreen"
+        KeyboardNavigation.TabNavigation="Cycle">
+    <DockPanel Margin="20">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
+            <Border Background="White" CornerRadius="12" Padding="4" Width="60" Height="60">
+                <Image Source="/VEDAR;component/Assets/vedar-logo-128.png" AutomationProperties.Name="{l:Loc app.title}" Focusable="False"/>
+            </Border>
+            <StackPanel Margin="14,0,0,0" VerticalAlignment="Center">
+                <TextBlock Text="{l:Loc wizard.title}" FontSize="{DynamicResource Vedar.FontSizeLarge}" FontWeight="Bold"/>
+                <TextBlock Text="{Binding StepNumberText}" Style="{StaticResource Vedar.Muted}"/>
+            </StackPanel>
+        </StackPanel>
+
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button x:Name="BackButton" Content="{l:Loc wizard.back}" Command="{Binding BackCommand}" IsEnabled="{Binding CanGoBack}"/>
+            <Button x:Name="SkipButton" Content="{l:Loc wizard.skip}" Command="{Binding SkipCommand}"
+                    Visibility="{Binding CanSkip, Converter={StaticResource BoolToVisibility}}"/>
+            <Button x:Name="NextButton" Command="{Binding NextCommand}" Style="{StaticResource Vedar.PrimaryButton}" MinHeight="56" FontSize="{DynamicResource Vedar.FontSize}">
+                <Button.Content>
+                    <TextBlock>
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="{l:Loc wizard.next, Plain=True}"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsLast}" Value="True">
+                                        <Setter Property="Text" Value="{l:Loc wizard.finish, Plain=True}"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button.Content>
+            </Button>
+        </StackPanel>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+            <StackPanel>
+                <!-- Focus moves here on every step so the screen reader reads the new step title and text. -->
+                <TextBox x:Name="StepText" IsReadOnly="True" IsTabStop="True" BorderThickness="0" Background="Transparent"
+                         Foreground="{DynamicResource Vedar.Foreground}" TextWrapping="Wrap" FontSize="{DynamicResource Vedar.FontSize}"
+                         AutomationProperties.Name="{Binding Title}" Padding="0" Margin="0,0,0,12">
+                    <TextBox.Text>
+                        <MultiBinding StringFormat="{}{0}&#x0a;&#x0a;{1}" Mode="OneWay">
+                            <Binding Path="Title"/>
+                            <Binding Path="Text"/>
+                        </MultiBinding>
+                    </TextBox.Text>
+                </TextBox>
+
+                <StackPanel Visibility="{Binding IsName, Converter={StaticResource BoolToVisibility}}">
+                    <Label Content="{l:Loc settings.userName}" Target="{Binding ElementName=NameBox}"/>
+                    <TextBox x:Name="NameBox" Text="{Binding Settings.UserName, UpdateSourceTrigger=PropertyChanged}" MaxLength="40"
+                             AutomationProperties.Name="{l:Loc settings.userName}"/>
+                </StackPanel>
+
+                <StackPanel Visibility="{Binding IsMicrophone, Converter={StaticResource BoolToVisibility}}">
+                    <Label Content="{l:Loc settings.mic.device}" Target="{Binding ElementName=WizardMicBox}"/>
+                    <ComboBox x:Name="WizardMicBox" ItemsSource="{Binding Settings.InputDevices}" SelectedItem="{Binding Settings.SelectedInputDevice}"
+                              AutomationProperties.Name="{l:Loc settings.mic.device}"/>
+                    <Button x:Name="WizardTestMicButton" Content="{l:Loc settings.mic.test}" Command="{Binding Settings.TestMicrophoneCommand}" HorizontalAlignment="Left"/>
+                    <TextBlock Text="{Binding Settings.MicrophoneTestResult}" AutomationProperties.LiveSetting="Polite"/>
+                </StackPanel>
+
+                <StackPanel Visibility="{Binding IsVoice, Converter={StaticResource BoolToVisibility}}">
+                    <Label Content="{l:Loc settings.voice.rate}" Target="{Binding ElementName=WizardRate}"/>
+                    <Slider x:Name="WizardRate" Minimum="0.5" Maximum="2" TickFrequency="0.05" SmallChange="0.05" LargeChange="0.25" Value="{Binding Settings.VoiceRate}"
+                            AutomationProperties.Name="{l:Loc settings.voice.rate}"/>
+                    <Label Content="{l:Loc settings.voice.volume}" Target="{Binding ElementName=WizardVolume}"/>
+                    <Slider x:Name="WizardVolume" Minimum="5" Maximum="100" TickFrequency="5" SmallChange="5" LargeChange="10" Value="{Binding Settings.VoiceVolume}"
+                            AutomationProperties.Name="{l:Loc settings.voice.volume}"/>
+                    <Button x:Name="WizardTestVoiceButton" Content="{l:Loc settings.voice.test}" Command="{Binding Settings.TestVoiceCommand}" HorizontalAlignment="Left"/>
+                </StackPanel>
+
+                <TextBlock Text="{Binding ModelsResult}" FontWeight="Bold" AutomationProperties.LiveSetting="Polite"
+                           Visibility="{Binding IsModels, Converter={StaticResource BoolToVisibility}}"/>
+
+                <StackPanel Visibility="{Binding IsAiKey, Converter={StaticResource BoolToVisibility}}">
+                    <Label Content="{l:Loc settings.ai.key}" Target="{Binding ElementName=WizardKeyBox}"/>
+                    <PasswordBox x:Name="WizardKeyBox" AutomationProperties.Name="{l:Loc settings.ai.key}" AutomationProperties.HelpText="{l:Loc settings.ai.key.help}"
+                                 PasswordChanged="OnKeyChanged"/>
+                    <TextBlock Text="{l:Loc settings.ai.key.help}" Style="{StaticResource Vedar.Muted}"/>
+                </StackPanel>
+
+                <StackPanel Visibility="{Binding IsAiTest, Converter={StaticResource BoolToVisibility}}">
+                    <Button x:Name="WizardTestAiButton" Content="{l:Loc settings.ai.test}" Command="{Binding Settings.TestAiCommand}" HorizontalAlignment="Left"/>
+                    <TextBlock Text="{Binding Settings.AiTestResult}" AutomationProperties.LiveSetting="Polite"/>
+                </StackPanel>
+
+                <StackPanel Visibility="{Binding IsAutoStart, Converter={StaticResource BoolToVisibility}}">
+                    <CheckBox x:Name="WizardAutoStart" Content="{l:Loc settings.autostart}" IsChecked="{Binding Settings.StartWithWindows}" AutomationProperties.Name="{l:Loc settings.autostart}"/>
+                    <CheckBox x:Name="WizardHandsFree" Content="{l:Loc settings.handsFree}" IsChecked="{Binding Settings.HandsFree}" AutomationProperties.Name="{l:Loc settings.handsFree}"
+                              AutomationProperties.HelpText="{l:Loc settings.handsFree.help}"/>
+                    <TextBlock Text="{l:Loc settings.handsFree.help}" Style="{StaticResource Vedar.Muted}"/>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

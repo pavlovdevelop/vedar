@@ -1,0 +1,147 @@
+<Window x:Class="Vedar.Desktop.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:Vedar.Desktop.Localization"
+        Title="{Binding WindowTitle}"
+        AutomationProperties.Name="{l:Loc app.slogan}"
+        Style="{StaticResource Vedar.Window}"
+        Width="980" Height="760" MinWidth="640" MinHeight="520"
+        WindowStartupLocation="CenterScreen"
+        ShowActivated="True"
+        KeyboardNavigation.TabNavigation="Cycle">
+    <Window.InputBindings>
+        <KeyBinding Key="Escape" Command="{Binding StopCommand}"/>
+        <KeyBinding Key="F1" Command="{Binding TalkCommand}"/>
+    </Window.InputBindings>
+    <DockPanel Margin="16">
+        <!-- Header: logo and product name. Images are decorative; the text carries the meaning. -->
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Background="White" CornerRadius="14" Padding="6" Width="76" Height="76" VerticalAlignment="Center">
+                <Image Source="/VEDAR;component/Assets/vedar-logo-128.png" AutomationProperties.Name="{l:Loc app.title}" Focusable="False"/>
+            </Border>
+            <StackPanel Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center">
+                <Border Background="White" CornerRadius="8" Padding="10,4" HorizontalAlignment="Left">
+                    <Image Source="/VEDAR;component/Assets/vedar-wordmark.png" Height="40" AutomationProperties.Name="{l:Loc app.title}" Focusable="False"/>
+                </Border>
+                <TextBlock Text="{l:Loc app.slogan}" FontSize="{DynamicResource Vedar.FontSize}" Margin="2,6,0,0" Foreground="{DynamicResource Vedar.MutedForeground}"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- Hidden-from-layout live region used for screen reader announcements. -->
+        <TextBlock x:Name="LiveRegion" DockPanel.Dock="Bottom" Height="1" Opacity="0" Focusable="False"
+                   AutomationProperties.Name="{l:Loc main.statusHeading}" AutomationProperties.LiveSetting="Polite"/>
+
+        <TabControl x:Name="Tabs" AutomationProperties.Name="VEDAR">
+            <TabItem x:Name="HomeTab" Header="{l:Loc main.tabHome}" AutomationProperties.Name="{l:Loc main.tabHome, Plain=True}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+                    <StackPanel>
+                        <TextBlock Text="{l:Loc main.statusHeading}" Style="{StaticResource Vedar.Heading}"/>
+                        <Border Background="{DynamicResource Vedar.Background}" BorderBrush="{DynamicResource Vedar.SurfaceBorder}" BorderThickness="2" CornerRadius="10" Padding="16">
+                            <StackPanel>
+                                <TextBlock x:Name="StatusText" Text="{Binding StatusText}" FontSize="{DynamicResource Vedar.FontSizeHuge}" FontWeight="Bold"
+                                           AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="{Binding StatusText}"/>
+                                <TextBlock Text="{Binding MicrophoneText}" AutomationProperties.LiveSetting="Polite" Margin="0,8,0,0"/>
+                                <TextBlock Text="{Binding HandsFreeText}" Style="{StaticResource Vedar.Muted}"/>
+                                <TextBlock Text="{Binding AiStatusText}" AutomationProperties.LiveSetting="Polite"/>
+                                <TextBlock Text="{Binding AiBadgeText}" Style="{StaticResource Vedar.Muted}"/>
+                                <TextBlock Text="{Binding HotkeyWarning}" Foreground="{DynamicResource Vedar.Focus}" FontWeight="Bold"
+                                           AutomationProperties.LiveSetting="Assertive"/>
+                            </StackPanel>
+                        </Border>
+
+                        <WrapPanel Margin="0,16,0,0">
+                            <Button x:Name="TalkButton" Content="{l:Loc main.talk}" Style="{StaticResource Vedar.PrimaryButton}" Command="{Binding TalkCommand}"
+                                    AutomationProperties.HelpText="{Binding TalkHelp}" ToolTip="{Binding TalkHelp}"/>
+                            <Button x:Name="StopButton" Content="{l:Loc main.stop}" Style="{StaticResource Vedar.DangerButton}" Command="{Binding StopCommand}"
+                                    AutomationProperties.HelpText="{Binding StopHelp}" ToolTip="{Binding StopHelp}"/>
+                        </WrapPanel>
+                        <WrapPanel>
+                            <Button x:Name="MicButton" Content="{Binding MicToggleText}" Command="{Binding ToggleMicrophoneCommand}"
+                                    AutomationProperties.Name="{Binding MicToggleText, Converter={StaticResource StripAccessKey}}"
+                                    AutomationProperties.HelpText="{Binding MicHelp}" ToolTip="{Binding MicHelp}"/>
+                            <Button x:Name="SettingsButton" Content="{l:Loc main.settings}" Command="{Binding OpenSettingsCommand}"
+                                    AutomationProperties.HelpText="{l:Loc main.settings.help}"/>
+                        </WrapPanel>
+
+                        <TextBlock Text="{l:Loc main.hotkeysHeading}" Style="{StaticResource Vedar.Heading}" Margin="0,16,0,4"/>
+                        <TextBlock Text="{Binding HotkeyTalkText}"/>
+                        <TextBlock Text="{Binding HotkeyStopText}"/>
+                        <TextBlock Text="{Binding HotkeyMicText}"/>
+                        <Button x:Name="ExitButton" Content="{l:Loc main.exit}" Command="{Binding ExitCommand}" HorizontalAlignment="Left" Margin="6,20,6,6"
+                                MinHeight="44" FontWeight="Normal"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem x:Name="ConversationTab" Header="{l:Loc main.tabConversation}" AutomationProperties.Name="{l:Loc main.tabConversation, Plain=True}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="{Binding StatusText}" FontSize="{DynamicResource Vedar.FontSizeLarge}" FontWeight="Bold" Margin="0,0,0,8"
+                               AutomationProperties.LiveSetting="Polite"/>
+
+                    <!-- Confirmation of sensitive actions; also answerable by voice ("да"/"не"). -->
+                    <Border DockPanel.Dock="Top" Visibility="{Binding HasConfirmation, Converter={StaticResource BoolToVisibility}}"
+                            BorderBrush="{DynamicResource Vedar.Focus}" BorderThickness="3" CornerRadius="8" Padding="12" Margin="0,0,0,8">
+                        <StackPanel>
+                            <TextBlock Text="{l:Loc main.confirmHeading}" Style="{StaticResource Vedar.Heading}"/>
+                            <TextBlock Text="{Binding ConfirmationQuestion}" AutomationProperties.LiveSetting="Assertive"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="ConfirmYesButton" Content="{l:Loc main.confirmYes}" Command="{Binding ConfirmYesCommand}"/>
+                                <Button x:Name="ConfirmNoButton" Content="{l:Loc main.confirmNo}" Command="{Binding ConfirmNoCommand}"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <WrapPanel DockPanel.Dock="Bottom">
+                        <Button x:Name="RepeatButton" Content="{l:Loc main.repeat}" Command="{Binding RepeatCommand}" AutomationProperties.HelpText="{l:Loc main.repeat.help}"/>
+                        <Button x:Name="InterruptButton" Content="{l:Loc main.interrupt}" Command="{Binding StopCommand}" AutomationProperties.HelpText="{Binding StopHelp}"/>
+                        <Button x:Name="NewConversationButton" Content="{l:Loc main.newConversation}" Command="{Binding NewConversationCommand}"/>
+                        <Button x:Name="EndConversationButton" Content="{l:Loc main.endConversation}" Command="{Binding EndConversationCommand}"/>
+                    </WrapPanel>
+
+                    <Grid DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Label x:Name="InputLabel" Content="{l:Loc main.input}" Target="{Binding ElementName=MessageBox}"/>
+                        <TextBox x:Name="MessageBox" Grid.Row="1" Text="{Binding MessageText, UpdateSourceTrigger=PropertyChanged}"
+                                 AutomationProperties.Name="{l:Loc main.input, Plain=True}" AutomationProperties.HelpText="{l:Loc main.input.help}">
+                            <TextBox.InputBindings>
+                                <KeyBinding Key="Enter" Command="{Binding SendCommand}"/>
+                            </TextBox.InputBindings>
+                        </TextBox>
+                        <Button x:Name="SendButton" Grid.Row="1" Grid.Column="1" Content="{l:Loc main.send}" Command="{Binding SendCommand}" Margin="8,0,0,8"/>
+                    </Grid>
+
+                    <ListBox x:Name="TranscriptList" ItemsSource="{Binding Transcript}" AutomationProperties.Name="{l:Loc main.transcript}"
+                             AutomationProperties.HelpText="{l:Loc main.transcript.help}" Padding="6"
+                             VirtualizingPanel.IsVirtualizing="False">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="{x:Type ListBoxItem}">
+                                <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleText}"/>
+                                <Setter Property="FocusVisualStyle" Value="{StaticResource Vedar.FocusVisual}"/>
+                                <Setter Property="Padding" Value="6"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Vedar.Foreground}"/>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock TextWrapping="Wrap" MaxWidth="860">
+                                    <Run Text="{Binding Speaker, Mode=OneWay}" FontWeight="Bold"/><Run Text=": "/><Run Text="{Binding Text, Mode=OneWay}"/>
+                                </TextBlock>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

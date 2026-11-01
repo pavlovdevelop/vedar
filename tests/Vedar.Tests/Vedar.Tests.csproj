@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- net10.0: cross-platform tests (run on Linux and Windows).
+         net10.0-windows: WPF keyboard/UI Automation, DPAPI and registry tests (run on Windows only). -->
+    <TargetFrameworks>net10.0;net10.0-windows</TargetFrameworks>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>Vedar.Tests</RootNamespace>
+    <NoWarn>$(NoWarn);CA1416;xUnit1051</NoWarn>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows'">
+    <UseWPF>true</UseWPF>
+    <DefineConstants>$(DefineConstants);WINDOWS_TESTS</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Vedar.Core\Vedar.Core.csproj" />
+    <ProjectReference Include="..\..\src\Vedar.Infrastructure\Vedar.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Vedar.Audio\Vedar.Audio.csproj" />
+    <ProjectReference Include="..\..\src\Vedar.Speech\Vedar.Speech.csproj" />
+    <ProjectReference Include="..\..\src\Vedar.AI\Vedar.AI.csproj" />
+    <ProjectReference Include="..\..\src\Vedar.Commands\Vedar.Commands.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-windows'">
+    <ProjectReference Include="..\..\src\Vedar.Accessibility\Vedar.Accessibility.csproj" />
+    <ProjectReference Include="..\..\src\Vedar.Desktop\Vedar.Desktop.csproj" />
+    <PackageReference Include="FlaUI.UIA3" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' != 'net10.0-windows'">
+    <Compile Remove="Windows\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="TestData\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Using Include="Xunit" />
+    <Using Include="System.IO" />
+    <Using Include="System.Net.Http" />
+  </ItemGroup>
+</Project>

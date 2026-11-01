@@ -1,0 +1,17 @@
+<Application x:Class="Vedar.Desktop.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="clr-namespace:Vedar.Desktop.Controls"
+             ShutdownMode="OnExplicitShutdown">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/DarkBlue.xaml"/>
+                <ResourceDictionary Source="Themes/Controls.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
+            <c:StripAccessKeyConverter x:Key="StripAccessKey"/>
+            <c:InverseBooleanConverter x:Key="InverseBoolean"/>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

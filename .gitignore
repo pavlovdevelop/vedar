@@ -1,0 +1,27 @@
+# Build output
+bin/
+obj/
+artifacts/
+dist/*
+!dist/README.md
+*.user
+*.suo
+.vs/
+.idea/
+TestResults/
+*.trx
+coverage*/
+
+# Large binary models are downloaded and verified by build/fetch-models.ps1
+models/**
+!models/README.md
+
+# Local tool caches
+build/.tools/
+.wine/
+
+# Never commit secrets
+*.key
+*.key.dat
+secrets/
+.env

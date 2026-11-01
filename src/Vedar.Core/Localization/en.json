@@ -1,0 +1,22 @@
+{
+  "app.slogan": "VEDAR — Your voice friend.",
+  "state.Starting": "Starting",
+  "state.Idle": "Ready",
+  "state.IdleHandsFree": "Ready — say “Vedar”",
+  "state.Listening": "Listening",
+  "state.Recognizing": "Recognizing speech",
+  "state.Processing": "Processing",
+  "state.Speaking": "Speaking",
+  "state.Error": "Error",
+  "state.Stopped": "Stopped",
+  "main.talk": "_Talk",
+  "main.stop": "_Stop",
+  "main.settings": "S_ettings",
+  "main.tabHome": "_Home",
+  "main.tabConversation": "_Conversation",
+  "settings.title": "VEDAR Settings",
+  "settings.save": "_Save",
+  "settings.cancel": "_Cancel",
+  "tray.show": "Show VEDAR",
+  "tray.exit": "Exit"
+}

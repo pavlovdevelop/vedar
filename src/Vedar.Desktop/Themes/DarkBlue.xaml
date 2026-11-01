@@ -1,0 +1,25 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- VEDAR dark blue palette. All text/background pairs meet WCAG AA (most AAA). -->
+    <SolidColorBrush x:Key="Vedar.Background" Color="#0B1F3A"/>
+    <SolidColorBrush x:Key="Vedar.Surface" Color="#13315C"/>
+    <SolidColorBrush x:Key="Vedar.SurfaceBorder" Color="#3E6CA8"/>
+    <SolidColorBrush x:Key="Vedar.Foreground" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Vedar.MutedForeground" Color="#D3DFF0"/>
+    <SolidColorBrush x:Key="Vedar.Accent" Color="#00E5FF"/>
+    <SolidColorBrush x:Key="Vedar.ButtonBackground" Color="#1E4A86"/>
+    <SolidColorBrush x:Key="Vedar.ButtonHover" Color="#2A5EA6"/>
+    <SolidColorBrush x:Key="Vedar.ButtonPressed" Color="#0F3A70"/>
+    <SolidColorBrush x:Key="Vedar.ButtonForeground" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Vedar.ButtonBorder" Color="#8FD9FF"/>
+    <SolidColorBrush x:Key="Vedar.PrimaryBackground" Color="#00C2EE"/>
+    <SolidColorBrush x:Key="Vedar.PrimaryHover" Color="#3DD6FF"/>
+    <SolidColorBrush x:Key="Vedar.PrimaryForeground" Color="#06162B"/>
+    <SolidColorBrush x:Key="Vedar.DangerBackground" Color="#B3261E"/>
+    <SolidColorBrush x:Key="Vedar.DangerHover" Color="#C9372E"/>
+    <SolidColorBrush x:Key="Vedar.DangerForeground" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Vedar.Focus" Color="#FFD400"/>
+    <SolidColorBrush x:Key="Vedar.InputBackground" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Vedar.InputForeground" Color="#0B1F3A"/>
+    <SolidColorBrush x:Key="Vedar.Listening" Color="#3DDC84"/>
+</ResourceDictionary>

@@ -1,0 +1,94 @@
+using System.Diagnostics;
+using FlaUI.Core;
+using FlaUI.Core.AutomationElements;
+using FlaUI.Core.Definitions;
+using FlaUI.Core.Input;
+using FlaUI.Core.Tools;
+using FlaUI.Core.WindowsAPI;
+using FlaUI.UIA3;
+using Vedar.Tests.Support;
+
+namespace Vedar.Tests.Windows;
+
+/// <summary>
+/// Starts the real VEDAR.exe and inspects it through Windows UI Automation — the same API that Narrator and NVDA use.
+/// </summary>
+public class UiAutomationEndToEndTests
+{
+    private static string? FindExe()
+    {
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        foreach (var candidate in new[]
+                 {
+                     Environment.GetEnvironmentVariable("VEDAR_EXE"),
+                     Path.Combine(root, "artifacts", "publish", "win-x64", "VEDAR.exe"),
+                     Path.Combine(root, "src", "Vedar.Desktop", "bin", "Release", "net10.0-windows", "win-x64", "VEDAR.exe"),
+                     Path.Combine(root, "src", "Vedar.Desktop", "bin", "Debug", "net10.0-windows", "win-x64", "VEDAR.exe"),
+                 })
+        {
+            if (candidate is not null && File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    [Fact]
+    public void Main_window_exposes_named_controls_to_screen_readers_and_works_with_keyboard()
+    {
+        Assert.SkipUnless(System.OperatingSystem.IsWindows(), "Windows only");
+        var exe = FindExe();
+        Assert.SkipWhen(exe is null, "VEDAR.exe has not been built.");
+        var data = TestModels.NewTempDir();
+        File.WriteAllText(Path.Combine(data, "settings.json"), """
+            { "General": { "FirstRunCompleted": true, "GreetOnStartup": false, "StartMinimizedToTray": false },
+              "Activation": { "HandsFreeEnabled": false, "PushToTalkHotkey": "Ctrl+Alt+Shift+F9", "StopHotkey": "Ctrl+Alt+Shift+F10", "MicrophoneToggleHotkey": "Ctrl+Alt+Shift+F11" },
+              "Ai": { "Provider": "None" } }
+            """);
+        var psi = new ProcessStartInfo(exe!) { UseShellExecute = false };
+        psi.Environment["VEDAR_DATA_DIR"] = data;
+        using var app = Application.Launch(psi);
+        using var automation = new UIA3Automation();
+        try
+        {
+            var window = Retry.WhileNull(() => app.GetAllTopLevelWindows(automation).FirstOrDefault(w => w.Name.Contains("VEDAR")), TimeSpan.FromSeconds(30)).Result;
+            Assert.NotNull(window);
+
+            var talk = window!.FindFirstDescendant(cf => cf.ByName("Говори").And(cf.ByControlType(ControlType.Button)));
+            var stop = window.FindFirstDescendant(cf => cf.ByName("Спри").And(cf.ByControlType(ControlType.Button)));
+            var settings = window.FindFirstDescendant(cf => cf.ByName("Настройки").And(cf.ByControlType(ControlType.Button)));
+            Assert.NotNull(talk);
+            Assert.NotNull(stop);
+            Assert.NotNull(settings);
+            Assert.True(talk.Properties.IsKeyboardFocusable.Value);
+            Assert.False(string.IsNullOrWhiteSpace(talk.Properties.HelpText.ValueOrDefault));
+            Assert.Equal("Alt+Г", talk.Properties.AccessKey.ValueOrDefault, ignoreCase: true);
+
+            var buttons = window.FindAllDescendants(cf => cf.ByControlType(ControlType.Button));
+            Assert.All(buttons, b => Assert.False(string.IsNullOrWhiteSpace(b.Name), "every button has an accessible name"));
+
+            // Keyboard: Alt+Н opens the settings window.
+            window.Focus();
+            Keyboard.TypeSimultaneously(VirtualKeyShort.ALT, (VirtualKeyShort)'Н');
+            var settingsWindow = Retry.WhileNull(() => app.GetAllTopLevelWindows(automation).FirstOrDefault(w => w.Name.Contains("Настройки")), TimeSpan.FromSeconds(10)).Result;
+            if (settingsWindow is null)
+            {
+                settings!.AsButton().Invoke(); // keyboard layouts on CI may differ; fall back to the UIA Invoke pattern
+                settingsWindow = Retry.WhileNull(() => app.GetAllTopLevelWindows(automation).FirstOrDefault(w => w.Name.Contains("Настройки")), TimeSpan.FromSeconds(10)).Result;
+            }
+
+            Assert.NotNull(settingsWindow);
+            var tabs = settingsWindow!.FindAllDescendants(cf => cf.ByControlType(ControlType.TabItem));
+            Assert.Equal(7, tabs.Length);
+            Assert.All(tabs, t => Assert.False(string.IsNullOrWhiteSpace(t.Name)));
+            var edits = settingsWindow.FindAllDescendants(cf => cf.ByControlType(ControlType.Edit));
+            Assert.All(edits, e => Assert.False(string.IsNullOrWhiteSpace(e.Name), "every text field has an accessible name"));
+        }
+        finally
+        {
+            app.Kill();
+        }
+    }
+}

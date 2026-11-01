@@ -1,0 +1,178 @@
+<Window x:Class="Vedar.Desktop.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:Vedar.Desktop.Localization"
+        xmlns:c="clr-namespace:Vedar.Desktop.Controls"
+        Title="{l:Loc settings.title}"
+        AutomationProperties.Name="{l:Loc settings.title}"
+        Style="{StaticResource Vedar.Window}"
+        Width="900" Height="760" MinWidth="620" MinHeight="520"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="True"
+        KeyboardNavigation.TabNavigation="Cycle">
+    <DockPanel Margin="16">
+        <TextBlock DockPanel.Dock="Top" Text="{l:Loc settings.title}" Style="{StaticResource Vedar.Heading}"/>
+        <!-- Results of actions are read by screen readers (polite live region). -->
+        <TextBlock DockPanel.Dock="Bottom" Text="{Binding StatusMessage}" Margin="0,8,0,0" FontWeight="Bold"
+                   Foreground="{DynamicResource Vedar.Accent}" AutomationProperties.LiveSetting="Polite"
+                   AutomationProperties.Name="{Binding StatusMessage}"/>
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button x:Name="SaveButton" Content="{l:Loc settings.save}" IsDefault="False" Click="OnSave" Style="{StaticResource Vedar.PrimaryButton}" MinHeight="56" FontSize="{DynamicResource Vedar.FontSize}"/>
+            <Button x:Name="CancelButton" Content="{l:Loc settings.cancel}" IsCancel="True" Command="{Binding CancelCommand}"/>
+        </StackPanel>
+
+        <TabControl x:Name="SettingsTabs" AutomationProperties.Name="{l:Loc settings.title}">
+            <!-- General -->
+            <TabItem Header="{l:Loc settings.tab.general}" AutomationProperties.Name="{l:Loc settings.tab.general}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+                    <StackPanel>
+                        <Label Content="{l:Loc settings.userName}" Target="{Binding ElementName=UserNameBox}"/>
+                        <TextBox x:Name="UserNameBox" Text="{Binding UserName, UpdateSourceTrigger=PropertyChanged}" MaxLength="40"
+                                 AutomationProperties.Name="{l:Loc settings.userName}" AutomationProperties.HelpText="{l:Loc settings.userName.help}"/>
+                        <CheckBox Content="{l:Loc settings.autostart}" IsChecked="{Binding StartWithWindows}" AutomationProperties.Name="{l:Loc settings.autostart}"/>
+                        <TextBlock Text="{Binding AutoStartDisabledText}" Style="{StaticResource Vedar.Muted}"/>
+                        <CheckBox Content="{l:Loc settings.greet}" IsChecked="{Binding GreetOnStartup}" AutomationProperties.Name="{l:Loc settings.greet}"/>
+                        <CheckBox Content="{l:Loc settings.startMinimized}" IsChecked="{Binding StartMinimized}" AutomationProperties.Name="{l:Loc settings.startMinimized}"/>
+                        <Label Content="{l:Loc settings.language}" Target="{Binding ElementName=LanguageBox}"/>
+                        <ComboBox x:Name="LanguageBox" ItemsSource="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}" AutomationProperties.Name="{l:Loc settings.language}"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- Voice -->
+            <TabItem Header="{l:Loc settings.tab.voice}" AutomationProperties.Name="{l:Loc settings.tab.voice}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+                    <StackPanel>
+                        <TextBlock Text="Piper — bg_BG-dimitar-medium (мъжки глас, без интернет)" Style="{StaticResource Vedar.Muted}"/>
+                        <Label Content="{l:Loc settings.voice.rate}" Target="{Binding ElementName=RateSlider}"/>
+                        <Slider x:Name="RateSlider" Minimum="0.5" Maximum="2" TickFrequency="0.05" SmallChange="0.05" LargeChange="0.25" Value="{Binding VoiceRate}"
+                                AutomationProperties.Name="{l:Loc settings.voice.rate}"/>
+                        <Label Content="{l:Loc settings.voice.volume}" Target="{Binding ElementName=VolumeSlider}"/>
+                        <Slider x:Name="VolumeSlider" Minimum="5" Maximum="100" TickFrequency="5" SmallChange="5" LargeChange="10" Value="{Binding VoiceVolume}"
+                                AutomationProperties.Name="{l:Loc settings.voice.volume}"/>
+                        <Label Content="{l:Loc settings.voice.output}" Target="{Binding ElementName=OutputBox}"/>
+                        <ComboBox x:Name="OutputBox" ItemsSource="{Binding OutputDevices}" SelectedItem="{Binding SelectedOutputDevice}" AutomationProperties.Name="{l:Loc settings.voice.output}"/>
+                        <CheckBox Content="{l:Loc settings.voice.earcons}" IsChecked="{Binding Earcons}" AutomationProperties.Name="{l:Loc settings.voice.earcons}"/>
+                        <Button x:Name="TestVoiceButton" Content="{l:Loc settings.voice.test}" Command="{Binding TestVoiceCommand}" HorizontalAlignment="Left"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- Microphone -->
+            <TabItem Header="{l:Loc settings.tab.microphone}" AutomationProperties.Name="{l:Loc settings.tab.microphone}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+                    <StackPanel>
+                        <Label Content="{l:Loc settings.mic.device}" Target="{Binding ElementName=MicBox}"/>
+                        <ComboBox x:Name="MicBox" ItemsSource="{Binding InputDevices}" SelectedItem="{Binding SelectedInputDevice}" AutomationProperties.Name="{l:Loc settings.mic.device}"/>
+                        <Label Content="{l:Loc settings.mic.sensitivity}" Target="{Binding ElementName=SensitivitySlider}"/>
+                        <Slider x:Name="SensitivitySlider" Minimum="0" Maximum="100" TickFrequency="5" SmallChange="5" LargeChange="10" Value="{Binding Sensitivity}"
+                                AutomationProperties.Name="{l:Loc settings.mic.sensitivity}" AutomationProperties.HelpText="{l:Loc settings.mic.sensitivity.help}"/>
+                        <Label Content="{l:Loc settings.mic.gain}" Target="{Binding ElementName=GainSlider}"/>
+                        <Slider x:Name="GainSlider" Minimum="0.25" Maximum="8" TickFrequency="0.25" SmallChange="0.25" LargeChange="1" Value="{Binding Gain}"
+                                AutomationProperties.Name="{l:Loc settings.mic.gain}"/>
+                        <CheckBox Content="{l:Loc settings.mic.noiseFilter}" IsChecked="{Binding NoiseFilter}" AutomationProperties.Name="{l:Loc settings.mic.noiseFilter}"/>
+                        <CheckBox Content="{l:Loc settings.mic.muted}" IsChecked="{Binding MicrophoneMuted}" AutomationProperties.Name="{l:Loc settings.mic.muted}"/>
+                        <Button x:Name="TestMicButton" Content="{l:Loc settings.mic.test}" Command="{Binding TestMicrophoneCommand}" HorizontalAlignment="Left"/>
+                        <TextBlock Text="{Binding MicrophoneTestResult}" AutomationProperties.LiveSetting="Polite"/>
+                        <Label Content="{l:Loc settings.stt.model}" Target="{Binding ElementName=SttBox}" Margin="0,16,0,0"/>
+                        <ComboBox x:Name="SttBox" ItemsSource="{Binding SttModels}" SelectedItem="{Binding SelectedSttModel}" AutomationProperties.Name="{l:Loc settings.stt.model}"
+                                  AutomationProperties.HelpText="{l:Loc settings.stt.model.help}"/>
+                        <Button x:Name="DownloadButton" Content="{l:Loc settings.stt.download}" Command="{Binding DownloadModelCommand}" HorizontalAlignment="Left"/>
+                        <TextBlock Text="{Binding DownloadStatus}" AutomationProperties.LiveSetting="Polite"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- Activation -->
+            <TabItem Header="{l:Loc settings.tab.activation}" AutomationProperties.Name="{l:Loc settings.tab.activation}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+                    <StackPanel>
+                        <CheckBox Content="{l:Loc settings.handsFree}" IsChecked="{Binding HandsFree}" AutomationProperties.Name="{l:Loc settings.handsFree}"
+                                  AutomationProperties.HelpText="{l:Loc settings.handsFree.help}"/>
+                        <TextBlock Text="{l:Loc settings.handsFree.help}" Style="{StaticResource Vedar.Muted}"/>
+                        <TextBlock Text="{l:Loc settings.hotkey.help}" Style="{StaticResource Vedar.Muted}"/>
+                        <Label Content="{l:Loc settings.hotkey.talk}" Target="{Binding ElementName=TalkHotkeyBox}"/>
+                        <c:HotkeyBox x:Name="TalkHotkeyBox" Hotkey="{Binding PushToTalkHotkey}" AutomationProperties.Name="{l:Loc settings.hotkey.talk}"
+                                     AutomationProperties.HelpText="{l:Loc settings.hotkey.help}"/>
+                        <Label Content="{l:Loc settings.hotkey.stop}" Target="{Binding ElementName=StopHotkeyBox}"/>
+                        <c:HotkeyBox x:Name="StopHotkeyBox" Hotkey="{Binding StopHotkey}" AutomationProperties.Name="{l:Loc settings.hotkey.stop}"
+                                     AutomationProperties.HelpText="{l:Loc settings.hotkey.help}"/>
+                        <Label Content="{l:Loc settings.hotkey.mic}" Target="{Binding ElementName=MicHotkeyBox}"/>
+                        <c:HotkeyBox x:Name="MicHotkeyBox" Hotkey="{Binding MicToggleHotkey}" AutomationProperties.Name="{l:Loc settings.hotkey.mic}"
+                                     AutomationProperties.HelpText="{l:Loc settings.hotkey.help}"/>
+                        <Label Content="{l:Loc settings.followUp}" Target="{Binding ElementName=FollowUpSlider}"/>
+                        <Slider x:Name="FollowUpSlider" Minimum="0" Maximum="30" TickFrequency="1" SmallChange="1" LargeChange="5" Value="{Binding FollowUpSeconds}"
+                                AutomationProperties.Name="{l:Loc settings.followUp}"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- AI -->
+            <TabItem Header="{l:Loc settings.tab.ai}" AutomationProperties.Name="{l:Loc settings.tab.ai}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+                    <StackPanel>
+                        <Label Content="{l:Loc settings.ai.provider}" Target="{Binding ElementName=ProviderBox}"/>
+                        <ComboBox x:Name="ProviderBox" ItemsSource="{Binding AiProviders}" SelectedItem="{Binding SelectedAiProvider}" AutomationProperties.Name="{l:Loc settings.ai.provider}"/>
+                        <Label Content="{l:Loc settings.ai.key}" Target="{Binding ElementName=ApiKeyBox}"/>
+                        <PasswordBox x:Name="ApiKeyBox" AutomationProperties.Name="{l:Loc settings.ai.key}" AutomationProperties.HelpText="{l:Loc settings.ai.key.help}"
+                                     PasswordChanged="OnApiKeyChanged"/>
+                        <TextBlock Text="{l:Loc settings.ai.key.help}" Style="{StaticResource Vedar.Muted}"/>
+                        <TextBlock Text="{Binding KeyStatusText}" AutomationProperties.LiveSetting="Polite"/>
+                        <Button x:Name="DeleteKeyButton" Content="{l:Loc settings.ai.keyDelete}" Command="{Binding DeleteKeyCommand}" HorizontalAlignment="Left"/>
+                        <Label Content="{l:Loc settings.ai.endpoint}" Target="{Binding ElementName=EndpointBox}"/>
+                        <TextBox x:Name="EndpointBox" Text="{Binding BgGptEndpoint, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="{l:Loc settings.ai.endpoint}"/>
+                        <Label Content="{l:Loc settings.ai.model}" Target="{Binding ElementName=ModelBox}"/>
+                        <TextBox x:Name="ModelBox" Text="{Binding BgGptModel, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="{l:Loc settings.ai.model}"/>
+                        <Label Content="{l:Loc settings.ai.maxTokens}" Target="{Binding ElementName=MaxTokensSlider}"/>
+                        <Slider x:Name="MaxTokensSlider" Minimum="100" Maximum="2000" TickFrequency="50" SmallChange="50" LargeChange="200" Value="{Binding MaxTokens}"
+                                AutomationProperties.Name="{l:Loc settings.ai.maxTokens}"/>
+                        <CheckBox Content="{l:Loc settings.ai.announceCloud}" IsChecked="{Binding AnnounceCloud}" AutomationProperties.Name="{l:Loc settings.ai.announceCloud}"/>
+                        <Button x:Name="TestAiButton" Content="{l:Loc settings.ai.test}" Command="{Binding TestAiCommand}" HorizontalAlignment="Left"/>
+                        <TextBlock Text="{Binding AiTestResult}" AutomationProperties.LiveSetting="Polite"/>
+                        <TextBlock Text="Ollama" Style="{StaticResource Vedar.Heading}" Margin="0,16,0,4"/>
+                        <TextBlock Text="{Binding ResourcesText}" Style="{StaticResource Vedar.Muted}"/>
+                        <Label Content="{l:Loc settings.ai.ollamaEndpoint}" Target="{Binding ElementName=OllamaEndpointBox}"/>
+                        <TextBox x:Name="OllamaEndpointBox" Text="{Binding OllamaEndpoint, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="{l:Loc settings.ai.ollamaEndpoint}"/>
+                        <Label Content="{l:Loc settings.ai.ollamaModel}" Target="{Binding ElementName=OllamaModelBox}"/>
+                        <ComboBox x:Name="OllamaModelBox" IsEditable="True" ItemsSource="{Binding OllamaModels}" Text="{Binding OllamaModel, UpdateSourceTrigger=PropertyChanged}"
+                                  AutomationProperties.Name="{l:Loc settings.ai.ollamaModel}"/>
+                        <Button x:Name="RefreshOllamaButton" Content="{l:Loc settings.ai.ollamaRefresh}" Command="{Binding RefreshOllamaCommand}" HorizontalAlignment="Left"/>
+                        <TextBlock Text="{Binding OllamaInfo}" AutomationProperties.LiveSetting="Polite"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- Privacy -->
+            <TabItem Header="{l:Loc settings.tab.privacy}" AutomationProperties.Name="{l:Loc settings.tab.privacy}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+                    <StackPanel>
+                        <TextBlock Text="{l:Loc settings.privacy.info}" Margin="0,0,0,12"/>
+                        <CheckBox Content="{l:Loc settings.privacy.saveHistory}" IsChecked="{Binding SaveHistory}" AutomationProperties.Name="{l:Loc settings.privacy.saveHistory}"/>
+                        <Button x:Name="DeleteHistoryButton" Content="{l:Loc settings.privacy.deleteHistory}" Command="{Binding DeleteHistoryCommand}" HorizontalAlignment="Left"/>
+                        <CheckBox Content="{l:Loc settings.privacy.diagnostic}" IsChecked="{Binding DiagnosticLogging}" AutomationProperties.Name="{l:Loc settings.privacy.diagnostic}"/>
+                        <Button x:Name="OpenDataButton" Content="{l:Loc settings.privacy.openData}" Command="{Binding OpenDataFolderCommand}" HorizontalAlignment="Left"/>
+                        <TextBlock Text="{Binding DataFolder}" Style="{StaticResource Vedar.Muted}"/>
+                        <Button x:Name="DeleteAllButton" Content="{l:Loc settings.privacy.deleteAll}" Click="OnDeleteAll" Style="{StaticResource Vedar.DangerButton}"
+                                FontSize="{DynamicResource Vedar.FontSize}" MinHeight="52" HorizontalAlignment="Left" Margin="6,16,6,6"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- Accessibility -->
+            <TabItem Header="{l:Loc settings.tab.accessibility}" AutomationProperties.Name="{l:Loc settings.tab.accessibility}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+                    <StackPanel>
+                        <TextBlock Text="{Binding ScreenReaderText}" Margin="0,0,0,12"/>
+                        <Label Content="{l:Loc settings.a11y.notifications}" Target="{Binding ElementName=NotificationBox}"/>
+                        <ComboBox x:Name="NotificationBox" ItemsSource="{Binding NotificationModes}" SelectedItem="{Binding SelectedNotificationMode}"
+                                  AutomationProperties.Name="{l:Loc settings.a11y.notifications}"/>
+                        <CheckBox Content="{l:Loc settings.a11y.speakStatus}" IsChecked="{Binding SpeakStatus}" AutomationProperties.Name="{l:Loc settings.a11y.speakStatus}"/>
+                        <Label Content="{l:Loc settings.a11y.fontScale}" Target="{Binding ElementName=FontSlider}"/>
+                        <Slider x:Name="FontSlider" Minimum="0.8" Maximum="2" TickFrequency="0.1" SmallChange="0.1" LargeChange="0.2" Value="{Binding FontScale}"
+                                AutomationProperties.Name="{l:Loc settings.a11y.fontScale}"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

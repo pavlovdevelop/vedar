@@ -1,0 +1,200 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+    <sys:Double x:Key="Vedar.FontSize">18</sys:Double>
+    <sys:Double x:Key="Vedar.FontSizeLarge">26</sys:Double>
+    <sys:Double x:Key="Vedar.FontSizeHuge">34</sys:Double>
+    <FontFamily x:Key="Vedar.Font">Segoe UI</FontFamily>
+
+    <!-- Very visible keyboard focus: thick yellow frame (system highlight in High Contrast). -->
+    <Style x:Key="Vedar.FocusVisual">
+        <Setter Property="Control.Template">
+            <Setter.Value>
+                <ControlTemplate>
+                    <Rectangle Margin="-4" StrokeThickness="4" Stroke="{DynamicResource Vedar.Focus}" RadiusX="6" RadiusY="6" SnapsToDevicePixels="True"/>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="{x:Type Window}" x:Key="Vedar.Window">
+        <Setter Property="Background" Value="{DynamicResource Vedar.Background}"/>
+        <Setter Property="Foreground" Value="{DynamicResource Vedar.Foreground}"/>
+        <Setter Property="FontFamily" Value="{DynamicResource Vedar.Font}"/>
+        <Setter Property="FontSize" Value="{DynamicResource Vedar.FontSize}"/>
+        <Setter Property="UseLayoutRounding" Value="True"/>
+        <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
+    </Style>
+
+    <Style TargetType="{x:Type TextBlock}">
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+    <Style TargetType="{x:Type Label}">
+        <Setter Property="Foreground" Value="{DynamicResource Vedar.Foreground}"/>
+        <Setter Property="FontSize" Value="{DynamicResource Vedar.FontSize}"/>
+        <Setter Property="Padding" Value="0,6,0,4"/>
+    </Style>
+
+    <Style TargetType="{x:Type Button}" x:Key="Vedar.Button">
+        <Setter Property="FocusVisualStyle" Value="{StaticResource Vedar.FocusVisual}"/>
+        <Setter Property="Background" Value="{DynamicResource Vedar.ButtonBackground}"/>
+        <Setter Property="Foreground" Value="{DynamicResource Vedar.ButtonForeground}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource Vedar.ButtonBorder}"/>
+        <Setter Property="BorderThickness" Value="2"/>
+        <Setter Property="FontSize" Value="{DynamicResource Vedar.FontSize}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="MinHeight" Value="52"/>
+        <Setter Property="MinWidth" Value="140"/>
+        <Setter Property="Padding" Value="18,8"/>
+        <Setter Property="Margin" Value="6"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type Button}">
+                    <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Vedar.ButtonHover}"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Vedar.ButtonPressed}"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Vedar.Focus}"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Bd" Property="Opacity" Value="0.5"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="{x:Type Button}" BasedOn="{StaticResource Vedar.Button}"/>
+
+    <Style x:Key="Vedar.PrimaryButton" TargetType="{x:Type Button}" BasedOn="{StaticResource Vedar.Button}">
+        <Setter Property="Background" Value="{DynamicResource Vedar.PrimaryBackground}"/>
+        <Setter Property="Foreground" Value="{DynamicResource Vedar.PrimaryForeground}"/>
+        <Setter Property="FontSize" Value="{DynamicResource Vedar.FontSizeLarge}"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="MinHeight" Value="80"/>
+        <Setter Property="MinWidth" Value="220"/>
+    </Style>
+
+    <Style x:Key="Vedar.DangerButton" TargetType="{x:Type Button}" BasedOn="{StaticResource Vedar.Button}">
+        <Setter Property="Background" Value="{DynamicResource Vedar.DangerBackground}"/>
+        <Setter Property="Foreground" Value="{DynamicResource Vedar.DangerForeground}"/>
+        <Setter Property="FontSize" Value="{DynamicResource Vedar.FontSizeLarge}"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="MinHeight" Value="80"/>
+        <Setter Property="MinWidth" Value="220"/>
+    </Style>
+
+    <Style TargetType="{x:Type TextBox}">
+        <Setter Property="FocusVisualStyle" Value="{StaticResource Vedar.FocusVisual}"/>
+        <Setter Property="Background" Value="{DynamicResource Vedar.InputBackground}"/>
+        <Setter Property="Foreground" Value="{DynamicResource Vedar.InputForeground}"/>
+        <Setter Property="FontSize" Value="{DynamicResource Vedar.FontSize}"/>
+        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="MinHeight" Value="44"/>
+        <Setter Property="Margin" Value="0,2,0,8"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+
+    <Style TargetType="{x:Type PasswordBox}">
+        <Setter Property="FocusVisualStyle" Value="{StaticResource Vedar.FocusVisual}"/>
+        <Setter Property="Background" Value="{DynamicResource Vedar.InputBackground}"/>
+        <Setter Property="Foreground" Value="{DynamicResource Vedar.InputForeground}"/>
+        <Setter Property="FontSize" Value="{DynamicResource Vedar.FontSize}"/>
+        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="MinHeight" Value="44"/>
+        <Setter Property="Margin" Value="0,2,0,8"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+
+    <Style TargetType="{x:Type ComboBox}">
+        <Setter Property="FocusVisualStyle" Value="{StaticResource Vedar.FocusVisual}"/>
+        <Setter Property="FontSize" Value="{DynamicResource Vedar.FontSize}"/>
+        <Setter Property="MinHeight" Value="44"/>
+        <Setter Property="Margin" Value="0,2,0,8"/>
+        <Setter Property="Padding" Value="8,6"/>
+    </Style>
+
+    <Style TargetType="{x:Type CheckBox}">
+        <Setter Property="FocusVisualStyle" Value="{StaticResource Vedar.FocusVisual}"/>
+        <Setter Property="Foreground" Value="{DynamicResource Vedar.Foreground}"/>
+        <Setter Property="FontSize" Value="{DynamicResource Vedar.FontSize}"/>
+        <Setter Property="Margin" Value="0,8"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="LayoutTransform">
+            <Setter.Value>
+                <ScaleTransform ScaleX="1.15" ScaleY="1.15"/>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="{x:Type Slider}">
+        <Setter Property="FocusVisualStyle" Value="{StaticResource Vedar.FocusVisual}"/>
+        <Setter Property="Margin" Value="0,4,0,10"/>
+        <Setter Property="MinHeight" Value="36"/>
+        <Setter Property="IsSnapToTickEnabled" Value="True"/>
+        <Setter Property="AutoToolTipPlacement" Value="TopLeft"/>
+    </Style>
+
+    <Style TargetType="{x:Type ListBox}">
+        <Setter Property="FocusVisualStyle" Value="{StaticResource Vedar.FocusVisual}"/>
+        <Setter Property="Background" Value="{DynamicResource Vedar.Surface}"/>
+        <Setter Property="Foreground" Value="{DynamicResource Vedar.Foreground}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource Vedar.SurfaceBorder}"/>
+        <Setter Property="FontSize" Value="{DynamicResource Vedar.FontSize}"/>
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+    </Style>
+
+    <Style TargetType="{x:Type TabItem}">
+        <Setter Property="FocusVisualStyle" Value="{StaticResource Vedar.FocusVisual}"/>
+        <Setter Property="FontSize" Value="{DynamicResource Vedar.FontSize}"/>
+        <Setter Property="Foreground" Value="{DynamicResource Vedar.Foreground}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type TabItem}">
+                    <Border x:Name="Bd" Background="{DynamicResource Vedar.ButtonBackground}" BorderBrush="{DynamicResource Vedar.SurfaceBorder}"
+                            BorderThickness="2,2,2,0" CornerRadius="8,8,0,0" Padding="18,8" Margin="0,0,4,0">
+                        <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" HorizontalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Vedar.Surface}"/>
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Vedar.Accent}"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Vedar.Focus}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="{x:Type TabControl}">
+        <Setter Property="Background" Value="{DynamicResource Vedar.Surface}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource Vedar.SurfaceBorder}"/>
+        <Setter Property="BorderThickness" Value="2"/>
+        <Setter Property="Padding" Value="16"/>
+    </Style>
+
+    <Style x:Key="Vedar.Heading" TargetType="{x:Type TextBlock}">
+        <Setter Property="FontSize" Value="{DynamicResource Vedar.FontSizeLarge}"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Margin" Value="0,4,0,8"/>
+        <Setter Property="Foreground" Value="{DynamicResource Vedar.Foreground}"/>
+    </Style>
+
+    <Style x:Key="Vedar.Muted" TargetType="{x:Type TextBlock}">
+        <Setter Property="Foreground" Value="{DynamicResource Vedar.MutedForeground}"/>
+        <Setter Property="Margin" Value="0,0,0,8"/>
+    </Style>
+</ResourceDictionary>

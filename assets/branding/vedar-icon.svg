@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="VEDAR">
+  <title>VEDAR icon</title>
+  <rect x="16" y="16" width="992" height="992" rx="200" fill="#FFFFFF"/>
+  <rect x="16" y="16" width="992" height="992" rx="200" fill="none" stroke="#D5E3F5" stroke-width="12"/>
+  <image href="vedar-logo.svg" x="72" y="80" width="880" height="880"/>
+</svg>
