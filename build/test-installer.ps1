@@ -21,7 +21,8 @@ $p = Start-Process -FilePath $Installer -ArgumentList '/VERYSILENT', '/SUPPRESSM
 if ($p.ExitCode -ne 0) { Get-Content $log -Tail 40; throw "Installer exit code $($p.ExitCode)" }
 if (-not (Test-Path (Join-Path $appDir 'VEDAR.exe'))) { throw 'VEDAR.exe was not installed.' }
 if (-not (Select-String -Path $log -Pattern 'All bundled speech models verified' -Quiet)) { throw 'Model verification did not run or failed.' }
-$run = (Get-ItemProperty $runKey -ErrorAction SilentlyContinue).VEDAR
+$runValue = Get-ItemProperty $runKey -Name VEDAR -ErrorAction SilentlyContinue
+$run = if ($runValue) { $runValue.VEDAR } else { '(missing)' }
 if ($run -notmatch '--background') { throw "Autostart entry missing or wrong: $run" }
 $uninstall = Get-ItemProperty $uninstallKey -ErrorAction SilentlyContinue
 if (-not $uninstall -or $uninstall.DisplayVersion -ne $script:VedarVersion) { throw 'Uninstall entry missing.' }
@@ -57,6 +58,7 @@ Write-Step 'Silent uninstall'
 $u = Start-Process -FilePath (Join-Path $appDir 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
 Start-Sleep -Seconds 3
 if (Test-Path (Join-Path $appDir 'VEDAR.exe')) { throw 'Files remain after uninstall.' }
-if ((Get-ItemProperty $runKey -ErrorAction SilentlyContinue).VEDAR) { throw 'Autostart entry remains after uninstall.' }
+# -Name returns nothing when the value is absent (reading .VEDAR on the key would throw under StrictMode).
+if ($null -ne (Get-ItemProperty $runKey -Name VEDAR -ErrorAction SilentlyContinue)) { throw 'Autostart entry remains after uninstall.' }
 if (Test-Path $uninstallKey) { throw 'Uninstall entry remains.' }
 Write-Host '   Install, start, exit and uninstall verified on Windows.' -ForegroundColor Green

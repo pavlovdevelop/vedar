@@ -22,14 +22,26 @@ public class KeyboardAccessibilityTests
     /// WPF allows one Application per process and its resources belong to one thread, so every UI test runs on a
     /// single shared STA dispatcher thread.
     /// </summary>
+    /// <remarks>
+    /// Deliberately not <c>Vedar.Desktop.App</c>: the WPF Application constructor queues the Startup event for when
+    /// the dispatcher starts, so App.OnStartup would start a real assistant inside the test process (single-instance
+    /// mutex, global hotkeys, the user's data folder) and the real VEDAR.exe started by the UI Automation test would
+    /// then exit as a second instance. The same resources as App.xaml are loaded instead.
+    /// </remarks>
     private static readonly Lazy<Dispatcher> UiThread = new(() =>
     {
         Dispatcher? dispatcher = null;
         using var ready = new ManualResetEventSlim();
         var thread = new Thread(() =>
         {
-            var app = new Vedar.Desktop.App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
-            app.InitializeComponent();
+            var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            var resources = new ResourceDictionary();
+            resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("pack://application:,,,/VEDAR;component/Themes/Controls.xaml", UriKind.Absolute) });
+            resources["BoolToVisibility"] = new BooleanToVisibilityConverter();
+            resources["StripAccessKey"] = new Vedar.Desktop.Controls.StripAccessKeyConverter();
+            resources["InverseBoolean"] = new Vedar.Desktop.Controls.InverseBooleanConverter();
+            app.Resources = resources;
+            Vedar.Desktop.Themes.ThemeManager.Apply(app, 1.0);
             dispatcher = Dispatcher.CurrentDispatcher;
             ready.Set();
             Dispatcher.Run();
@@ -55,11 +67,12 @@ public class KeyboardAccessibilityTests
         Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
     }
 
-    private static List<string> TabCycle(Window w, int max = 80)
+    /// <summary>Presses Tab (MoveFocus Next) from <paramref name="start"/> until the focus returns to it.</summary>
+    /// <remarks>Start inside the selected tab's content: focusing a TabItem would select that tab.</remarks>
+    private static List<string> TabCycle(UIElement start, int max = 80)
     {
         var names = new List<string>();
-        var first = AccessibilityAuditor.InteractiveControls(w).First(c => c.IsVisible);
-        first.Focus();
+        Assert.True(start.Focus(), "the start element accepts keyboard focus");
         for (int i = 0; i < max; i++)
         {
             if (Keyboard.FocusedElement is FrameworkElement fe)
@@ -94,7 +107,7 @@ public class KeyboardAccessibilityTests
             var issues = AccessibilityAuditor.Audit(w);
             Assert.True(issues.Count == 0, string.Join("; ", issues.Select(i => $"{i.Element}: {i.Problem}")));
 
-            var cycle = TabCycle(w);
+            var cycle = TabCycle(w.TalkButton);
             foreach (var expected in new[] { "TalkButton", "StopButton", "MicButton", "SettingsButton", "ExitButton" })
             {
                 Assert.Contains(expected, cycle);
@@ -105,7 +118,7 @@ public class KeyboardAccessibilityTests
 
             w.ShowConversation();
             w.UpdateLayout();
-            var conversationCycle = TabCycle(w);
+            var conversationCycle = TabCycle(w.MessageBox);
             foreach (var expected in new[] { "MessageBox", "SendButton", "RepeatButton", "InterruptButton", "TranscriptList" })
             {
                 Assert.Contains(expected, conversationCycle);
