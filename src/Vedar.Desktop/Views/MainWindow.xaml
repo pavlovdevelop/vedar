@@ -9,10 +9,6 @@
         WindowStartupLocation="CenterScreen"
         ShowActivated="True"
         KeyboardNavigation.TabNavigation="Cycle">
-    <Window.InputBindings>
-        <KeyBinding Key="Escape" Command="{Binding StopCommand}"/>
-        <KeyBinding Key="F1" Command="{Binding TalkCommand}"/>
-    </Window.InputBindings>
     <DockPanel Margin="16">
         <!-- Header: logo and product name. Images are decorative; the text carries the meaning. -->
         <Grid DockPanel.Dock="Top" Margin="0,0,0,12">
@@ -113,16 +109,13 @@
                         </Grid.RowDefinitions>
                         <Label x:Name="InputLabel" Content="{l:Loc main.input}" Target="{Binding ElementName=MessageBox}"/>
                         <TextBox x:Name="MessageBox" Grid.Row="1" Text="{Binding MessageText, UpdateSourceTrigger=PropertyChanged}"
-                                 AutomationProperties.Name="{l:Loc main.input, Plain=True}" AutomationProperties.HelpText="{l:Loc main.input.help}">
-                            <TextBox.InputBindings>
-                                <KeyBinding Key="Enter" Command="{Binding SendCommand}"/>
-                            </TextBox.InputBindings>
-                        </TextBox>
+                                 AutomationProperties.Name="{l:Loc main.input, Plain=True}" AutomationProperties.HelpText="{l:Loc main.input.help}"/>
                         <Button x:Name="SendButton" Grid.Row="1" Grid.Column="1" Content="{l:Loc main.send}" Command="{Binding SendCommand}" Margin="8,0,0,8"/>
                     </Grid>
 
                     <ListBox x:Name="TranscriptList" ItemsSource="{Binding Transcript}" AutomationProperties.Name="{l:Loc main.transcript}"
                              AutomationProperties.HelpText="{l:Loc main.transcript.help}" Padding="6"
+                             IsTabStop="True" KeyboardNavigation.TabNavigation="Once"
                              VirtualizingPanel.IsVirtualizing="False">
                         <ListBox.ItemContainerStyle>
                             <Style TargetType="{x:Type ListBoxItem}">

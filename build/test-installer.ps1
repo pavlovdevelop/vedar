@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   End-to-end installer test on Windows: silent install → verify → start VEDAR → exit → uninstall → verify.
 .DESCRIPTION

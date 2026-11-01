@@ -65,14 +65,18 @@ jobs:
       - name: Test (net10.0)
         run: dotnet test --project tests/Vedar.Tests/Vedar.Tests.csproj -c Release -f net10.0 --no-build
       - name: Test (net10.0-windows — WPF keyboard/UIA, DPAPI, registry, FlaUI end-to-end)
+        id: wintests
         run: dotnet test --project tests/Vedar.Tests/Vedar.Tests.csproj -c Release -f net10.0-windows --no-build
       - name: Create installer
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: ./build/create-installer.ps1
       - name: Installer end-to-end test (install, start, exit, uninstall)
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: ./build/test-installer.ps1
       - name: Upload installer
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: VEDAR-Setup-v0.1.0-x64

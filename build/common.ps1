@@ -1,4 +1,4 @@
-# Shared helpers for the VEDAR build scripts. Works with Windows PowerShell 5.1 and PowerShell 7 (Windows/Linux).
+﻿# Shared helpers for the VEDAR build scripts. Works with Windows PowerShell 5.1 and PowerShell 7 (Windows/Linux).
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'

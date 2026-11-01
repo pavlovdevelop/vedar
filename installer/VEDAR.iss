@@ -94,7 +94,7 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 [Icons]
 ; Ctrl+Alt+V opens VEDAR from anywhere (Windows shortcut hotkey).
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; HotKey: ctrl+alt+v; Comment: "VEDAR — Твоят гласов приятел (Ctrl+Alt+V)"
-Name: "{autoprograms}\{#AppName} — {cm:UserGuide}"; Filename: "{app}\docs\Ръководство на потребителя.txt"
+Name: "{autoprograms}\{#AppName} — {cm:UserGuide}"; Filename: "{app}\docs\USER_GUIDE_BG.txt"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Tasks: desktopicon; Comment: "VEDAR — Твоят гласов приятел"
 
 [Registry]

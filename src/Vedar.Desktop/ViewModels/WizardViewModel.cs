@@ -49,7 +49,7 @@ public sealed partial class WizardViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsWelcome), nameof(IsName), nameof(IsMicrophone), nameof(IsVoice), nameof(IsModels), nameof(IsAiKey),
-        nameof(IsAiTest), nameof(IsAutoStart), nameof(IsCommands), nameof(IsDone), nameof(CanGoBack), nameof(IsLast), nameof(CanSkip), nameof(StepNumberText))]
+        nameof(IsAiTest), nameof(IsAutoStart), nameof(IsCommands), nameof(IsDone), nameof(CanGoBack), nameof(IsLast), nameof(CanSkip), nameof(StepNumberText), nameof(NextText))]
     private WizardStep _current = WizardStep.Welcome;
 
     [ObservableProperty] private string _title = string.Empty;
@@ -69,6 +69,8 @@ public sealed partial class WizardViewModel : ObservableObject
     public bool CanGoBack => Current != WizardStep.Welcome;
     public bool IsLast => Current == WizardStep.Done;
     public bool CanSkip => Current is WizardStep.AiKey or WizardStep.AiTest;
+    /// <summary>"_Напред" or "_Готово" (with access key).</summary>
+    public string NextText => IsLast ? _loc["wizard.finish"] : _loc["wizard.next"];
     public string StepNumberText => _loc.Format("wizard.stepOf", Array.IndexOf(Steps, Current) + 1, Steps.Length);
 
     private void UpdateTexts()

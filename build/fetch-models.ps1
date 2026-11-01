@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Downloads the speech models VEDAR ships with and verifies their SHA-256 checksums.
 .DESCRIPTION

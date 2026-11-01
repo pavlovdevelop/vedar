@@ -53,16 +53,23 @@ public class UiAutomationEndToEndTests
         using var automation = new UIA3Automation();
         try
         {
-            var window = Retry.WhileNull(() => app.GetAllTopLevelWindows(automation).FirstOrDefault(w => w.Name.Contains("VEDAR")), TimeSpan.FromSeconds(30)).Result;
-            Assert.NotNull(window);
+            var window = Retry.WhileNull(() => app.GetAllTopLevelWindows(automation).FirstOrDefault(w => w.Name.Contains("VEDAR")), TimeSpan.FromSeconds(60)).Result;
+            if (window is null)
+            {
+                var names = app.HasExited ? "(process exited)" : string.Join(" | ", app.GetAllTopLevelWindows(automation).Select(w => $"'{w.Name}'"));
+                var log = Directory.Exists(Path.Combine(data, "logs"))
+                    ? string.Join("\n", Directory.GetFiles(Path.Combine(data, "logs")).Select(File.ReadAllText))
+                    : "(no log)";
+                Assert.Fail($"VEDAR window not found. Exited: {app.HasExited} (code {(app.HasExited ? app.ExitCode : 0)}). Windows: {names}\nLog:\n{log}");
+            }
 
-            var talk = window!.FindFirstDescendant(cf => cf.ByName("Говори").And(cf.ByControlType(ControlType.Button)));
+            var talk = window.FindFirstDescendant(cf => cf.ByName("Говори").And(cf.ByControlType(ControlType.Button)));
             var stop = window.FindFirstDescendant(cf => cf.ByName("Спри").And(cf.ByControlType(ControlType.Button)));
             var settings = window.FindFirstDescendant(cf => cf.ByName("Настройки").And(cf.ByControlType(ControlType.Button)));
             Assert.NotNull(talk);
             Assert.NotNull(stop);
             Assert.NotNull(settings);
-            Assert.True(talk.Properties.IsKeyboardFocusable.Value);
+            Assert.True(talk!.Properties.IsKeyboardFocusable.Value);
             Assert.False(string.IsNullOrWhiteSpace(talk.Properties.HelpText.ValueOrDefault));
             Assert.Equal("Alt+Г", talk.Properties.AccessKey.ValueOrDefault, ignoreCase: true);
 

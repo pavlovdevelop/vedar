@@ -34,7 +34,8 @@ public static class AccessibilityAuditor
                 issues.Add(new AccessibilityIssue(id, "missing accessible name"));
             }
 
-            if (!c.Focusable || (!c.IsTabStop && c is not TabItem))
+            // An editable ComboBox is reached through its inner text box, so the ComboBox itself is not a tab stop.
+            if (!c.Focusable || (!c.IsTabStop && c is not TabItem && c is not ComboBox { IsEditable: true }))
             {
                 issues.Add(new AccessibilityIssue(id, "not reachable with the keyboard"));
             }

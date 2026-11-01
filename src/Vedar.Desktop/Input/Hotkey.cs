@@ -39,13 +39,14 @@ public readonly record struct Hotkey(ModifierKeys Modifiers, Key Key)
                     key = Key.Escape;
                     break;
                 default:
-                    if (Enum.TryParse<Key>(raw, ignoreCase: true, out var k))
-                    {
-                        key = k;
-                    }
-                    else if (raw.Length == 1 && char.IsAsciiDigit(raw[0]))
+                    if (raw.Length == 1 && char.IsAsciiDigit(raw[0]))
                     {
                         key = Key.D0 + (raw[0] - '0');
+                    }
+                    else if (!raw.All(char.IsAsciiDigit) && Enum.TryParse<Key>(raw, ignoreCase: true, out var k) && Enum.IsDefined(k))
+                    {
+                        // Numeric strings would parse as raw enum values ("1" = Key.Cancel), so they are excluded.
+                        key = k;
                     }
                     else
                     {

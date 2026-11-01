@@ -23,22 +23,8 @@
             <Button x:Name="BackButton" Content="{l:Loc wizard.back}" Command="{Binding BackCommand}" IsEnabled="{Binding CanGoBack}"/>
             <Button x:Name="SkipButton" Content="{l:Loc wizard.skip}" Command="{Binding SkipCommand}"
                     Visibility="{Binding CanSkip, Converter={StaticResource BoolToVisibility}}"/>
-            <Button x:Name="NextButton" Command="{Binding NextCommand}" Style="{StaticResource Vedar.PrimaryButton}" MinHeight="56" FontSize="{DynamicResource Vedar.FontSize}">
-                <Button.Content>
-                    <TextBlock>
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Text" Value="{l:Loc wizard.next, Plain=True}"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsLast}" Value="True">
-                                        <Setter Property="Text" Value="{l:Loc wizard.finish, Plain=True}"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </Button.Content>
-            </Button>
+            <Button x:Name="NextButton" Content="{Binding NextText}" Command="{Binding NextCommand}" Style="{StaticResource Vedar.PrimaryButton}" MinHeight="56"
+                    FontSize="{DynamicResource Vedar.FontSize}" AutomationProperties.Name="{Binding NextText, Converter={StaticResource StripAccessKey}}"/>
         </StackPanel>
 
         <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">

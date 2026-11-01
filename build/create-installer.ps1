@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Compiles the Windows installer dist/VEDAR-Setup-v0.1.0-x64.exe with Inno Setup.
 .DESCRIPTION
@@ -69,6 +69,7 @@ if (Test-OnWindows) {
 } else {
     if (-not (Get-Command wine -ErrorAction SilentlyContinue)) { throw 'Wine is required to run Inno Setup on Linux/macOS (or build on Windows).' }
     $env:WINEDEBUG = '-all'
+    if (-not $env:LANG -or $env:LANG -notmatch 'UTF-8') { $env:LANG = 'C.UTF-8' } # Wine maps Unix file names with the locale
     Invoke-Native 'wine' (@($iscc) + $isccArgs)
 }
 

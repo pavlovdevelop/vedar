@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Full VEDAR build: models → compile → tests → self-contained publish → Windows installer.
 .EXAMPLE

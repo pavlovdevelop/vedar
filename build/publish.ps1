@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Creates the self-contained Windows x64 build of VEDAR (no .NET installation needed on the target PC).
 .DESCRIPTION
@@ -106,7 +106,7 @@ foreach ($doc in @('README.md', 'USER_GUIDE_BG.md', 'INSTALLATION.md', 'ACCESSIB
 $guide = Join-Path $script:RepoRoot 'USER_GUIDE_BG.md'
 if (Test-Path $guide) {
     $text = (Get-Content -Raw -Encoding UTF8 $guide) -replace '(?m)^#{1,6}\s*', '' -replace '\*\*', '' -replace '(?m)^\s*[-*]\s+', '- ' -replace '`', ''
-    [IO.File]::WriteAllText((Join-Path $docsOut 'Ръководство на потребителя.txt'), $text, (New-Object System.Text.UTF8Encoding($true)))
+    [IO.File]::WriteAllText((Join-Path $docsOut 'USER_GUIDE_BG.txt'), $text, (New-Object System.Text.UTF8Encoding($true)))
 }
 
 $commit = try { (& git -C $script:RepoRoot rev-parse --short HEAD 2>$null) } catch { 'unknown' }
