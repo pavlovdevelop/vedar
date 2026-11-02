@@ -314,11 +314,11 @@ public class ProviderTests : IAsyncLifetime
 
     public async ValueTask DisposeAsync() => await _server.DisposeAsync();
 
-    private (TestSettingsStore Settings, InMemorySecretStore Secrets, BgGptProvider BgGpt, OllamaProvider Ollama, AiRouter Router) Create(AiProviderKind kind, bool withKey, double ramGb = 16)
+    private (TestSettingsStore Settings, InMemorySecretStore Secrets, BgGptProvider BgGpt, OllamaProvider Ollama, AiRouter Router) Create(AiProviderKind kind, bool withKey, double ramGb = 16, bool withGroqKey = false)
     {
         var settings = new TestSettingsStore(new VedarSettings
         {
-            Ai = new AiSettings { Provider = kind, BgGptEndpoint = _server.BaseUrl + "/v1", OllamaEndpoint = _server.BaseUrl + "/ollama" },
+            Ai = new AiSettings { Provider = kind, BgGptEndpoint = _server.BaseUrl + "/v1", OllamaEndpoint = _server.BaseUrl + "/ollama", GroqEndpoint = _server.BaseUrl + "/groq/v1" },
         });
         var secrets = new InMemorySecretStore();
         if (withKey)
@@ -326,11 +326,177 @@ public class ProviderTests : IAsyncLifetime
             secrets.Set(SecretNames.BgGptApiKey, "key-abcdef123456");
         }
 
+        if (withGroqKey)
+        {
+            secrets.Set(SecretNames.GroqApiKey, "gsk_groq123456");
+        }
+
         var http = OpenAiCompatibleChatClient.CreateHttpClient();
         var client = new OpenAiCompatibleChatClient(http, new CapturingLogger(), _ => TimeSpan.FromMilliseconds(20));
         var bggpt = new BgGptProvider(client, settings, secrets, Log.Null<BgGptProvider>());
         var ollama = new OllamaProvider(client, http, settings, Log.Null<OllamaProvider>(), () => SystemResources.Evaluate(ramGb, 8), () => true);
-        return (settings, secrets, bggpt, ollama, new AiRouter(settings, bggpt, ollama, Log.Null<AiRouter>()));
+        var groq = new GroqProvider(client, settings, secrets, Log.Null<GroqProvider>());
+        return (settings, secrets, bggpt, ollama, new AiRouter(settings, bggpt, ollama, Log.Null<AiRouter>(), groq));
+    }
+
+    /// <summary>BgGPT answers with <paramref name="bggptStatus"/> (0 = streams "BgGPT"), Groq streams "Groq".</summary>
+    private void BgGptFailsGroqAnswers(int bggptStatus)
+    {
+        _server.Handler = (ctx, _) =>
+        {
+            if (ctx.Request.Path.Value!.StartsWith("/groq/"))
+            {
+                return MockHttpServer.WriteSseAsync(ctx, ["Отговор ", "от Groq."]);
+            }
+
+            if (bggptStatus == 0)
+            {
+                return MockHttpServer.WriteSseAsync(ctx, ["BgGPT."]);
+            }
+
+            ctx.Response.StatusCode = bggptStatus;
+            return ctx.Response.WriteAsync("{\"message\":\"fail\"}");
+        };
+    }
+
+    [Fact]
+    public async Task Groq_request_uses_the_free_model_bearer_key_and_hides_reasoning()
+    {
+        _server.Handler = (ctx, _) => MockHttpServer.WriteSseAsync(ctx, ["Здравей."]);
+        var (settings, _, _, _, router) = Create(AiProviderKind.Groq, withKey: false, withGroqKey: true);
+        settings.Current.Ai.MaxResponseTokens = 300;
+        Assert.True(router.IsConfigured);
+        Assert.Equal("Groq", router.ActiveProviderName);
+        Assert.Equal("Здравей.", await Collect(router.StreamReplyAsync([ChatMessage.User("здравей")], CancellationToken.None)));
+        var r = _server.Requests.Single();
+        Assert.Equal("/groq/v1/chat/completions", r.Path);
+        Assert.Equal("Bearer gsk_groq123456", r.Authorization);
+        Assert.Contains("\"model\":\"openai/gpt-oss-120b\"", r.Body);
+        Assert.Contains("\"reasoning_effort\":\"low\"", r.Body);
+        Assert.Contains("\"include_reasoning\":false", r.Body);
+        Assert.Contains("\"max_tokens\":812", r.Body); // answer + allowance for hidden reasoning
+    }
+
+    [Theory]
+    [InlineData(401)] // rejected key
+    [InlineData(429)] // rate limit
+    [InlineData(503)] // server error (after the retries)
+    public async Task Groq_answers_when_BgGPT_fails_and_the_switch_is_announced(int status)
+    {
+        BgGptFailsGroqAnswers(status);
+        var (_, _, _, _, router) = Create(AiProviderKind.BgGpt, withKey: true, withGroqKey: true);
+        AiFallbackEventArgs? fallback = null;
+        router.FallbackUsed += (_, e) => fallback = e;
+        var system = ChatMessage.System("Ти си Ведар. Работиш чрез езиковия модел BgGPT.");
+
+        var reply = await Collect(router.StreamReplyAsync([system, ChatMessage.User("здравей")], CancellationToken.None));
+
+        Assert.Equal("Отговор от Groq.", reply);
+        Assert.NotNull(fallback);
+        Assert.Equal("BgGPT", fallback!.FailedProvider);
+        Assert.Equal("Groq", fallback.BackupProvider);
+        Assert.Equal("Groq", router.ActiveProviderName);
+        // The backup is told its own name, so it never claims to be BgGPT.
+        var groqRequest = _server.Requests.Single(r => r.Path.StartsWith("/groq/"));
+        using var json = JsonDocument.Parse(groqRequest.Body);
+        var systemText = json.RootElement.GetProperty("messages")[0].GetProperty("content").GetString();
+        Assert.Equal("Ти си Ведар. Работиш чрез езиковия модел Groq.", systemText);
+    }
+
+    [Fact]
+    public async Task Groq_answers_when_BgGPT_cannot_be_reached()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        BgGptFailsGroqAnswers(0);
+        var (settings, _, _, _, router) = Create(AiProviderKind.BgGpt, withKey: true, withGroqKey: true);
+        settings.Current.Ai.BgGptEndpoint = $"http://127.0.0.1:{port}/v1";
+        Assert.Equal("Отговор от Groq.", await Collect(router.StreamReplyAsync([ChatMessage.User("здравей")], CancellationToken.None)));
+    }
+
+    [Fact]
+    public async Task No_backup_without_a_Groq_key_or_when_the_backup_is_switched_off()
+    {
+        BgGptFailsGroqAnswers(503);
+        var (_, _, _, _, noKey) = Create(AiProviderKind.BgGpt, withKey: true);
+        var ex = await Assert.ThrowsAsync<AiProviderException>(() => Collect(noKey.StreamReplyAsync([ChatMessage.User("здравей")], CancellationToken.None)));
+        Assert.Equal(AiErrorKind.ServerError, ex.Kind);
+
+        var (settings, _, _, _, off) = Create(AiProviderKind.BgGpt, withKey: true, withGroqKey: true);
+        settings.Current.Ai.UseGroqFallback = false;
+        await Assert.ThrowsAsync<AiProviderException>(() => Collect(off.StreamReplyAsync([ChatMessage.User("здравей")], CancellationToken.None)));
+        Assert.DoesNotContain(_server.Requests, r => r.Path.StartsWith("/groq/"));
+    }
+
+    [Fact]
+    public async Task Partly_spoken_BgGPT_answer_is_not_repeated_by_Groq()
+    {
+        _server.Handler = async (ctx, _) =>
+        {
+            if (ctx.Request.Path.Value!.StartsWith("/groq/"))
+            {
+                await MockHttpServer.WriteSseAsync(ctx, ["Groq"]);
+                return;
+            }
+
+            await MockHttpServer.WriteSseAsync(ctx, ["Начало "], done: false);
+            ctx.Abort();
+        };
+        var (_, _, _, _, router) = Create(AiProviderKind.BgGpt, withKey: true, withGroqKey: true);
+        var tokens = new List<string>();
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+        {
+            await foreach (var t in router.StreamReplyAsync([ChatMessage.User("здравей")], CancellationToken.None))
+            {
+                tokens.Add(t);
+            }
+        });
+        Assert.Equal(["Начало "], tokens);
+        Assert.DoesNotContain(_server.Requests, r => r.Path.StartsWith("/groq/"));
+    }
+
+    [Fact]
+    public async Task Without_a_BgGPT_key_a_saved_Groq_key_still_gives_conversations()
+    {
+        BgGptFailsGroqAnswers(0);
+        var (_, _, _, _, router) = Create(AiProviderKind.BgGpt, withKey: false, withGroqKey: true);
+        Assert.True(router.IsConfigured);
+        Assert.Equal("Отговор от Groq.", await Collect(router.StreamReplyAsync([ChatMessage.User("здравей")], CancellationToken.None)));
+        Assert.All(_server.Requests, r => Assert.StartsWith("/groq/", r.Path));
+    }
+
+    [Fact]
+    public async Task Optional_reasoning_fields_are_dropped_if_the_service_rejects_them()
+    {
+        _server.Handler = (ctx, _) =>
+        {
+            if (_server.Requests.Last().Body.Contains("reasoning_effort"))
+            {
+                ctx.Response.StatusCode = 400;
+                return ctx.Response.WriteAsync("{\"error\":{\"message\":\"unsupported parameter reasoning_effort\"}}");
+            }
+
+            return MockHttpServer.WriteSseAsync(ctx, ["Добре."]);
+        };
+        var (_, _, _, _, router) = Create(AiProviderKind.Groq, withKey: false, withGroqKey: true);
+        Assert.Equal("Добре.", await Collect(router.StreamReplyAsync([ChatMessage.User("здравей")], CancellationToken.None)));
+        Assert.Equal(2, _server.Requests.Count);
+        Assert.DoesNotContain("reasoning_effort", _server.Requests.Last().Body);
+    }
+
+    [Fact]
+    public async Task Status_reports_the_backup_when_BgGPT_is_down_but_checks_each_service_separately()
+    {
+        BgGptFailsGroqAnswers(401);
+        var (_, _, _, _, router) = Create(AiProviderKind.BgGpt, withKey: true, withGroqKey: true);
+        var overall = await router.CheckStatusAsync(CancellationToken.None);
+        Assert.True(overall.IsAvailable);
+        Assert.Equal("Groq", overall.ProviderName);
+        Assert.Contains("BgGPT: Unauthorized", overall.Detail);
+        Assert.Equal(AiAvailability.Unauthorized, (await router.CheckProviderAsync("BgGPT", CancellationToken.None)).Availability);
+        Assert.True((await router.CheckProviderAsync("Groq", CancellationToken.None)).IsAvailable);
     }
 
     private static async Task<string> Collect(IAsyncEnumerable<string> s)

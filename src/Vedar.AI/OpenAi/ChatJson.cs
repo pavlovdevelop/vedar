@@ -7,7 +7,7 @@ namespace Vedar.AI.OpenAi;
 /// <summary>JSON helpers for the OpenAI Chat Completions format.</summary>
 public static class ChatJson
 {
-    public static string BuildRequest(string model, IReadOnlyList<ChatMessage> messages, int maxTokens, float temperature, bool stream)
+    public static string BuildRequest(string model, IReadOnlyList<ChatMessage> messages, int maxTokens, float temperature, bool stream, IReadOnlyDictionary<string, object>? extra = null)
     {
         var array = new JsonArray();
         foreach (var m in messages)
@@ -27,6 +27,21 @@ public static class ChatJson
             ["temperature"] = Math.Round(temperature, 2),
             ["stream"] = stream,
         };
+        if (extra is not null)
+        {
+            foreach (var (name, value) in extra)
+            {
+                body[name] = value switch
+                {
+                    bool b => JsonValue.Create(b),
+                    int i => JsonValue.Create(i),
+                    double d => JsonValue.Create(d),
+                    float f => JsonValue.Create(f),
+                    _ => JsonValue.Create(value.ToString()),
+                };
+            }
+        }
+
         return body.ToJsonString();
     }
 

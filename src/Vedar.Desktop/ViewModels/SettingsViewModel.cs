@@ -81,6 +81,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         _ollamaModel = s.Ai.OllamaModel;
         _maxTokens = s.Ai.MaxResponseTokens;
         _announceCloud = s.Ai.AnnounceCloudUse;
+        _useGroqFallback = s.Ai.UseGroqFallback;
+        _groqModel = s.Ai.GroqModel;
         UpdateKeyStatus();
         var resources = SystemResources.Evaluate();
         ResourcesText = _loc.Format("settings.ai.resources", Math.Round(resources.TotalMemoryGb, 1), resources.Explanation);
@@ -113,6 +115,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>The new API key typed by the user (set by the view from the PasswordBox; never persisted here).</summary>
     public string? PendingApiKey { get; set; }
 
+    /// <summary>The new Groq key typed by the user (set by the view from its PasswordBox; never persisted here).</summary>
+    public string? PendingGroqKey { get; set; }
+
     [ObservableProperty] private string _userName;
     [ObservableProperty] private bool _greetOnStartup;
     [ObservableProperty] private bool _startMinimized;
@@ -138,6 +143,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _bgGptModel;
     [ObservableProperty] private string _ollamaEndpoint;
     [ObservableProperty] private string _ollamaModel;
+    [ObservableProperty] private bool _useGroqFallback;
+    [ObservableProperty] private string _groqModel;
+    [ObservableProperty] private string _groqKeyStatusText = string.Empty;
+    [ObservableProperty] private string _groqTestResult = string.Empty;
     [ObservableProperty] private int _maxTokens;
     [ObservableProperty] private bool _announceCloud;
     [ObservableProperty] private string _keyStatusText = string.Empty;
@@ -184,6 +193,69 @@ public sealed partial class SettingsViewModel : ObservableObject
         bool exists;
         try { exists = _services.Secrets.Exists(SecretNames.BgGptApiKey); } catch (Exception) { exists = false; }
         KeyStatusText = exists ? _loc["settings.ai.keyPresent"] : _loc["settings.ai.keyMissing"];
+        try { exists = _services.Secrets.Exists(SecretNames.GroqApiKey); } catch (Exception) { exists = false; }
+        GroqKeyStatusText = exists ? _loc["settings.ai.keyPresent"] : _loc["settings.ai.keyMissing"];
+    }
+
+    /// <summary>Stores keys typed in the dialog (cleaned of pasted prefixes, quotes and line breaks).</summary>
+    private void StorePendingKeys()
+    {
+        if (!string.IsNullOrWhiteSpace(PendingApiKey))
+        {
+            _services.Secrets.Set(SecretNames.BgGptApiKey, ApiKeyText.Normalize(PendingApiKey));
+            PendingApiKey = null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(PendingGroqKey))
+        {
+            _services.Secrets.Set(SecretNames.GroqApiKey, ApiKeyText.Normalize(PendingGroqKey));
+            PendingGroqKey = null;
+        }
+
+        UpdateKeyStatus();
+    }
+
+    private string DescribeStatus(AiStatus status)
+    {
+        var summary = status.Availability switch
+        {
+            AiAvailability.Available => _loc.Format("ai.status.available", status.ProviderName),
+            AiAvailability.MissingApiKey => _loc.Format("ai.status.missingKey", status.ProviderName),
+            AiAvailability.Offline => _loc.Format("speech.ai.offline", status.ProviderName),
+            AiAvailability.Unauthorized => _loc.Format("speech.ai.unauthorized", status.ProviderName),
+            AiAvailability.NotConfigured => _loc["ai.status.notConfigured"],
+            _ => _loc.Format("ai.status.unavailable", status.ProviderName),
+        };
+
+        // The technical reason (HTTP status, server message, network error) helps to find the cause. It never contains the key.
+        return status.IsAvailable || string.IsNullOrWhiteSpace(status.Detail)
+            ? summary
+            : summary + " " + _loc.Format("settings.ai.testDetail", status.Detail);
+    }
+
+    /// <summary>Checks one service with the values currently shown in the dialog.</summary>
+    private async Task<AiStatus> CheckWithDialogValuesAsync(string providerName)
+    {
+        StorePendingKeys();
+        var live = _services.Settings.Current;
+        var backup = JsonSettingsStore.Clone(live);
+        live.Ai.BgGptEndpoint = BgGptEndpoint;
+        live.Ai.BgGptModel = BgGptModel;
+        live.Ai.GroqModel = string.IsNullOrWhiteSpace(GroqModel) ? AiSettings.DefaultGroqModel : GroqModel.Trim();
+        live.Ai.OllamaEndpoint = OllamaEndpoint;
+        live.Ai.OllamaModel = OllamaModel ?? string.Empty;
+        try
+        {
+            return await _services.Ai.CheckProviderAsync(providerName, CancellationToken.None);
+        }
+        finally
+        {
+            live.Ai.BgGptEndpoint = backup.Ai.BgGptEndpoint;
+            live.Ai.BgGptModel = backup.Ai.BgGptModel;
+            live.Ai.GroqModel = backup.Ai.GroqModel;
+            live.Ai.OllamaEndpoint = backup.Ai.OllamaEndpoint;
+            live.Ai.OllamaModel = backup.Ai.OllamaModel;
+        }
     }
 
     /// <summary>Validates and builds the settings that will be saved.</summary>
@@ -231,6 +303,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         s.Ai.OllamaModel = OllamaModel ?? string.Empty;
         s.Ai.MaxResponseTokens = MaxTokens;
         s.Ai.AnnounceCloudUse = AnnounceCloud;
+        s.Ai.UseGroqFallback = UseGroqFallback;
+        s.Ai.GroqModel = GroqModel;
         s.Ai.SaveHistory = SaveHistory;
         s.Privacy.DiagnosticLogging = DiagnosticLogging;
         s.Accessibility.ScreenReaderNotifications = SelectedNotificationMode.Value;
@@ -252,12 +326,11 @@ public sealed partial class SettingsViewModel : ObservableObject
         var modelChanged = settings.Recognition.ModelFile != _original.Recognition.ModelFile;
         var voiceChanged = settings.Voice.VoiceId != _original.Voice.VoiceId;
         var languageChanged = settings.General.UiLanguage != _original.General.UiLanguage;
-        if (!string.IsNullOrWhiteSpace(PendingApiKey))
+        if (!string.IsNullOrWhiteSpace(PendingApiKey) || !string.IsNullOrWhiteSpace(PendingGroqKey))
         {
             try
             {
-                _services.Secrets.Set(SecretNames.BgGptApiKey, ApiKeyText.Normalize(PendingApiKey));
-                PendingApiKey = null;
+                StorePendingKeys();
             }
             catch (Exception ex)
             {
@@ -360,40 +433,15 @@ public sealed partial class SettingsViewModel : ObservableObject
         AiTestResult = _loc["settings.ai.testing"];
         try
         {
-            if (!string.IsNullOrWhiteSpace(PendingApiKey))
+            // Checks the selected main service itself (a working backup must not hide a BgGPT problem).
+            var provider = SelectedAiProvider.Value switch
             {
-                _services.Secrets.Set(SecretNames.BgGptApiKey, ApiKeyText.Normalize(PendingApiKey));
-                PendingApiKey = null;
-                UpdateKeyStatus();
-            }
-
-            // Test with the values currently shown in the dialog.
-            var live = _services.Settings.Current;
-            var backup = JsonSettingsStore.Clone(live);
-            live.Ai.Provider = SelectedAiProvider.Value;
-            live.Ai.BgGptEndpoint = BgGptEndpoint;
-            live.Ai.BgGptModel = BgGptModel;
-            live.Ai.OllamaEndpoint = OllamaEndpoint;
-            live.Ai.OllamaModel = OllamaModel ?? string.Empty;
-            var status = await _services.Orchestrator.RefreshAiStatusAsync();
-            live.Ai.Provider = backup.Ai.Provider;
-            live.Ai.BgGptEndpoint = backup.Ai.BgGptEndpoint;
-            live.Ai.BgGptModel = backup.Ai.BgGptModel;
-            live.Ai.OllamaEndpoint = backup.Ai.OllamaEndpoint;
-            live.Ai.OllamaModel = backup.Ai.OllamaModel;
-            var summary = status.Availability switch
-            {
-                AiAvailability.Available => _loc.Format("ai.status.available", status.ProviderName),
-                AiAvailability.MissingApiKey => _loc.Format("ai.status.missingKey", status.ProviderName),
-                AiAvailability.Offline => _loc.Format("speech.ai.offline", status.ProviderName),
-                AiAvailability.Unauthorized => _loc.Format("speech.ai.unauthorized", status.ProviderName),
-                AiAvailability.NotConfigured => _loc["ai.status.notConfigured"],
-                _ => _loc.Format("ai.status.unavailable", status.ProviderName),
+                AiProviderKind.Ollama => "Ollama",
+                AiProviderKind.Groq => "Groq",
+                _ => "BgGPT",
             };
-            // The technical reason (HTTP status, server message, network error) helps to find the cause. It never contains the key.
-            AiTestResult = status.IsAvailable || string.IsNullOrWhiteSpace(status.Detail)
-                ? summary
-                : summary + " " + _loc.Format("settings.ai.testDetail", status.Detail);
+            AiTestResult = DescribeStatus(await CheckWithDialogValuesAsync(provider));
+            _ = _services.Orchestrator.RefreshAiStatusAsync();
         }
         catch (Exception ex)
         {
@@ -418,6 +466,41 @@ public sealed partial class SettingsViewModel : ObservableObject
         OllamaInfo = !info.Installed ? _loc["settings.ai.ollamaNotInstalled"]
             : !info.Running ? _loc["settings.ai.ollamaNotRunning"]
             : _loc.Format("settings.ai.ollamaRunning", info.Models.Count == 0 ? "0" : string.Join(", ", info.Models));
+    }
+
+    [RelayCommand]
+    private async Task TestGroq()
+    {
+        IsBusy = true;
+        GroqTestResult = _loc["settings.ai.testing"];
+        try
+        {
+            GroqTestResult = DescribeStatus(await CheckWithDialogValuesAsync("Groq"));
+        }
+        catch (Exception ex)
+        {
+            GroqTestResult = ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private void DeleteGroqKey()
+    {
+        try
+        {
+            _services.Secrets.Delete(SecretNames.GroqApiKey);
+            StatusMessage = _loc["settings.ai.keyDeleted"];
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = ex.Message;
+        }
+
+        UpdateKeyStatus();
     }
 
     [RelayCommand]

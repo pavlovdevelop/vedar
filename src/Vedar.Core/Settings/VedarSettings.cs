@@ -64,6 +64,8 @@ public sealed class VedarSettings
         Ai.BgGptEndpoint = string.IsNullOrWhiteSpace(Ai.BgGptEndpoint) ? AiSettings.DefaultBgGptEndpoint : Ai.BgGptEndpoint.Trim();
         Ai.BgGptModel = string.IsNullOrWhiteSpace(Ai.BgGptModel) ? AiSettings.DefaultBgGptModel : Ai.BgGptModel.Trim();
         Ai.OllamaEndpoint = string.IsNullOrWhiteSpace(Ai.OllamaEndpoint) ? AiSettings.DefaultOllamaEndpoint : Ai.OllamaEndpoint.Trim();
+        Ai.GroqEndpoint = string.IsNullOrWhiteSpace(Ai.GroqEndpoint) ? AiSettings.DefaultGroqEndpoint : Ai.GroqEndpoint.Trim();
+        Ai.GroqModel = string.IsNullOrWhiteSpace(Ai.GroqModel) ? AiSettings.DefaultGroqModel : Ai.GroqModel.Trim();
         Accessibility.FontScale = Math.Clamp(Accessibility.FontScale, 0.8, 2.0);
         Websites = Websites.Where(w => w is not null && !string.IsNullOrWhiteSpace(w.Name) && WebsiteShortcut.IsSafeUrl(w.Url)).ToList();
         SchemaVersion = CurrentSchemaVersion;
@@ -159,6 +161,8 @@ public enum AiProviderKind
     Ollama,
     /// <summary>BgGPT when online and configured, otherwise Ollama when available.</summary>
     Auto,
+    /// <summary>Groq cloud API (free plan with a personal key), normally used as the backup for BgGPT.</summary>
+    Groq,
 }
 
 public sealed class AiSettings
@@ -166,12 +170,19 @@ public sealed class AiSettings
     public const string DefaultBgGptEndpoint = "https://api.bggpt.ai/v1";
     public const string DefaultBgGptModel = "bggpt-gemma-3-27b-fp8";
     public const string DefaultOllamaEndpoint = "http://localhost:11434";
+    public const string DefaultGroqEndpoint = "https://api.groq.com/openai/v1";
+    /// <summary>On Groq's free plan (30 requests per minute, 1000 per day — checked November 2026).</summary>
+    public const string DefaultGroqModel = "openai/gpt-oss-120b";
 
     public AiProviderKind Provider { get; set; } = AiProviderKind.BgGpt;
     public string BgGptEndpoint { get; set; } = DefaultBgGptEndpoint;
     public string BgGptModel { get; set; } = DefaultBgGptModel;
     public string OllamaEndpoint { get; set; } = DefaultOllamaEndpoint;
     public string OllamaModel { get; set; } = string.Empty;
+    public string GroqEndpoint { get; set; } = DefaultGroqEndpoint;
+    public string GroqModel { get; set; } = DefaultGroqModel;
+    /// <summary>When BgGPT does not answer (no connection, error, rejected key), ask Groq instead — if a Groq key is saved.</summary>
+    public bool UseGroqFallback { get; set; } = true;
     public int MaxResponseTokens { get; set; } = 400;
     public float Temperature { get; set; } = 0.4f;
     public int RequestTimeoutSeconds { get; set; } = 90;

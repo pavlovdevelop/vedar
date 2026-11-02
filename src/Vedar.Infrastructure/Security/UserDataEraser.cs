@@ -27,6 +27,7 @@ public sealed class UserDataEraser
     {
         var failures = new List<string>();
         Try("api key", () => _secrets.Delete(SecretNames.BgGptApiKey), failures);
+        Try("groq api key", () => _secrets.Delete(SecretNames.GroqApiKey), failures);
         Try("history", _history.DeleteAll, failures);
         Try("autostart", () => { if (_autoStart.IsSupported) { _autoStart.Disable(); } }, failures);
         Try("secrets", () => DeleteDir(_paths.SecretsDir), failures);

@@ -71,6 +71,8 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     private bool _listenAfterCancel;
     private int _aiRequestActive;
     private bool _cloudNoticeGiven;
+    private readonly HashSet<string> _backupCloudNoticeGiven = new(StringComparer.Ordinal);
+    private SpeechPlaybackQueue? _aiQueue;
     private bool _aiNotConfiguredExplained;
     private PendingConfirmation? _pendingConfirmation;
     private MicrophoneStatus _microphoneStatus = MicrophoneStatus.Standby;
@@ -116,6 +118,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         _listener.MicrophoneError += OnMicrophoneError;
         _listener.SpeechStarted += OnSpeechStarted;
         _settingsStore.SettingsChanged += OnSettingsChanged;
+        _ai.FallbackUsed += OnAiFallback;
     }
 
     public AssistantStateMachine StateMachine { get; } = new();
@@ -1040,6 +1043,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             var messages = Conversation.BuildRequest(SystemPromptBuilder.Build(provider, Settings.General.UserName, _clock.Now));
             var chunker = new StreamingSentenceChunker();
             queue = new SpeechPlaybackQueue(_synthesizer, _output, new SynthesisOptions(Settings.Voice.Rate), OnSpeakingStarted, _logger, ct);
+            Volatile.Write(ref _aiQueue, queue);
             using var thinking = StartThinkingCue(ct);
 
             await foreach (var token in _ai.StreamReplyAsync(messages, ct).ConfigureAwait(false))
@@ -1103,7 +1107,8 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
                 }
             }
 
-            var message = partial.Length > 0 ? _loc.Get("speech.ai.interrupted") : DescribeAiError(ex, provider);
+            // After a switch to the backup service, the error is the backup's (the switch itself was announced).
+            var message = partial.Length > 0 ? _loc.Get("speech.ai.interrupted") : DescribeAiError(ex, _ai.ActiveProviderName);
             if (ex.Kind is AiErrorKind.NoConnection or AiErrorKind.Unauthorized or AiErrorKind.MissingApiKey)
             {
                 _ = RefreshAiStatusAsync(CancellationToken.None);
@@ -1129,6 +1134,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         }
         finally
         {
+            Volatile.Write(ref _aiQueue, null);
             if (queue is not null)
             {
                 await queue.DisposeAsync().ConfigureAwait(false);
@@ -1136,6 +1142,20 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
             Volatile.Write(ref _aiRequestActive, 0);
         }
+    }
+
+    /// <summary>The main AI service failed before answering; say that the backup answers (and, once, that it is a cloud service).</summary>
+    private void OnAiFallback(object? sender, AiFallbackEventArgs e)
+    {
+        var text = _loc.Format("speech.ai.fallback", e.FailedProvider, e.BackupProvider);
+        if (e.BackupIsCloud && Settings.Ai.AnnounceCloudUse && _backupCloudNoticeGiven.Add(e.BackupProvider))
+        {
+            text += " " + _loc.Format("speech.ai.fallbackCloud", e.BackupProvider);
+        }
+
+        _logger.LogInformation("AI fallback: {From} -> {To} ({Reason}).", e.FailedProvider, e.BackupProvider, e.Reason);
+        RaiseNotification(UiNotificationKind.Status, text, true);
+        Volatile.Read(ref _aiQueue)?.Enqueue(text);
     }
 
     private CancellationTokenSource StartThinkingCue(CancellationToken ct)
@@ -1321,6 +1341,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         _listener.MicrophoneError -= OnMicrophoneError;
         _listener.SpeechStarted -= OnSpeechStarted;
         _settingsStore.SettingsChanged -= OnSettingsChanged;
+        _ai.FallbackUsed -= OnAiFallback;
         _lifetime.Cancel();
         try
         {

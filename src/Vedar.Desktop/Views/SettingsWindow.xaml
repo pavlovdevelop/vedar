@@ -128,7 +128,19 @@
                                 AutomationProperties.Name="{l:Loc settings.ai.maxTokens}"/>
                         <CheckBox Content="{l:Loc settings.ai.announceCloud}" IsChecked="{Binding AnnounceCloud}" AutomationProperties.Name="{l:Loc settings.ai.announceCloud}"/>
                         <Button x:Name="TestAiButton" Content="{l:Loc settings.ai.test}" Command="{Binding TestAiCommand}" HorizontalAlignment="Left"/>
-                        <TextBlock Text="{Binding AiTestResult}" AutomationProperties.LiveSetting="Polite"/>
+                        <TextBlock Text="{Binding AiTestResult}" AutomationProperties.LiveSetting="Polite" TextWrapping="Wrap"/>
+                        <TextBlock Text="{l:Loc settings.ai.groqHeading}" Style="{StaticResource Vedar.Heading}" Margin="0,16,0,4"/>
+                        <TextBlock Text="{l:Loc settings.ai.groqInfo}" Style="{StaticResource Vedar.Muted}" TextWrapping="Wrap"/>
+                        <CheckBox x:Name="GroqFallbackBox" Content="{l:Loc settings.ai.groqFallback}" IsChecked="{Binding UseGroqFallback}" AutomationProperties.Name="{l:Loc settings.ai.groqFallback}"/>
+                        <Label Content="{l:Loc settings.ai.groqKey}" Target="{Binding ElementName=GroqKeyBox}"/>
+                        <PasswordBox x:Name="GroqKeyBox" AutomationProperties.Name="{l:Loc settings.ai.groqKey}" AutomationProperties.HelpText="{l:Loc settings.ai.groqInfo}"
+                                     PasswordChanged="OnGroqKeyChanged"/>
+                        <TextBlock Text="{Binding GroqKeyStatusText}" AutomationProperties.LiveSetting="Polite"/>
+                        <Button x:Name="DeleteGroqKeyButton" Content="{l:Loc settings.ai.groqKeyDelete}" Command="{Binding DeleteGroqKeyCommand}" HorizontalAlignment="Left"/>
+                        <Label Content="{l:Loc settings.ai.groqModel}" Target="{Binding ElementName=GroqModelBox}"/>
+                        <TextBox x:Name="GroqModelBox" Text="{Binding GroqModel, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="{l:Loc settings.ai.groqModel}"/>
+                        <Button x:Name="TestGroqButton" Content="{l:Loc settings.ai.groqTest}" Command="{Binding TestGroqCommand}" HorizontalAlignment="Left"/>
+                        <TextBlock Text="{Binding GroqTestResult}" AutomationProperties.LiveSetting="Polite" TextWrapping="Wrap"/>
                         <TextBlock Text="Ollama" Style="{StaticResource Vedar.Heading}" Margin="0,16,0,4"/>
                         <TextBlock Text="{Binding ResourcesText}" Style="{StaticResource Vedar.Muted}"/>
                         <Label Content="{l:Loc settings.ai.ollamaEndpoint}" Target="{Binding ElementName=OllamaEndpointBox}"/>

@@ -19,7 +19,8 @@ public sealed record ChatEndpoint(
     TimeSpan TotalTimeout,
     int MaxRetries = 2);
 
-public sealed record ChatCompletionRequest(string Model, IReadOnlyList<ChatMessage> Messages, int MaxTokens, float Temperature);
+/// <param name="Extra">Additional request fields (strings, numbers, booleans), e.g. reasoning settings.</param>
+public sealed record ChatCompletionRequest(string Model, IReadOnlyList<ChatMessage> Messages, int MaxTokens, float Temperature, IReadOnlyDictionary<string, object>? Extra = null);
 
 /// <summary>
 /// Client for any OpenAI-compatible Chat Completions API (BgGPT, Ollama's /v1 endpoint).
@@ -62,7 +63,7 @@ public sealed class OpenAiCompatibleChatClient
         Exception? failure = null;
         try
         {
-            var body = ChatJson.BuildRequest(request.Model, request.Messages, request.MaxTokens, request.Temperature, stream: true);
+            var body = ChatJson.BuildRequest(request.Model, request.Messages, request.MaxTokens, request.Temperature, stream: true, request.Extra);
             for (int attempt = 0; ; attempt++)
             {
                 bool anyToken = false;

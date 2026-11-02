@@ -23,6 +23,7 @@ public interface ISecretStore
 public static class SecretNames
 {
     public const string BgGptApiKey = "bggpt-api-key";
+    public const string GroqApiKey = "groq-api-key";
 }
 
 public interface IClock

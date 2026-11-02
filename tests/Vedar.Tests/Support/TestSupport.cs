@@ -204,6 +204,11 @@ public sealed class FakeVoiceListener : IVoiceListener
 /// <summary>Conversational AI fake with scripted replies, errors, delays and concurrency tracking.</summary>
 public sealed class FakeConversationAi : IConversationAi
 {
+    public event EventHandler<AiFallbackEventArgs>? FallbackUsed;
+
+    /// <summary>Simulates the router switching to a backup service before the next reply.</summary>
+    public void RaiseFallback(string from, string to, AiErrorKind reason) => FallbackUsed?.Invoke(this, new AiFallbackEventArgs(from, to, true, reason));
+
     private int _active;
     public Queue<Func<IAsyncEnumerable<string>>> Scripts { get; } = new();
     public List<IReadOnlyList<ChatMessage>> Requests { get; } = [];
@@ -221,6 +226,19 @@ public sealed class FakeConversationAi : IConversationAi
     public void Reply(params string[] tokens) => Scripts.Enqueue(() => Tokens(tokens, TimeSpan.Zero));
     public void ReplySlowly(TimeSpan perToken, params string[] tokens) => Scripts.Enqueue(() => Tokens(tokens, perToken));
     public void Fail(AiErrorKind kind) => Scripts.Enqueue(() => Throw(kind));
+
+    /// <summary>The main service fails and the router announces the backup before its answer.</summary>
+    public void ReplyAfterFallback(string from, string to, params string[] tokens) => Scripts.Enqueue(() => FallbackThen(from, to, tokens));
+
+    private async IAsyncEnumerable<string> FallbackThen(string from, string to, string[] tokens)
+    {
+        RaiseFallback(from, to, AiErrorKind.NoConnection);
+        foreach (var t in tokens)
+        {
+            await Task.Yield();
+            yield return t;
+        }
+    }
 
     private static async IAsyncEnumerable<string> Tokens(string[] tokens, TimeSpan delay, [EnumeratorCancellation] CancellationToken ct = default)
     {

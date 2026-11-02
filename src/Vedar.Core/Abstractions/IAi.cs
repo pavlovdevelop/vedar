@@ -45,9 +45,21 @@ public sealed record AiStatus(AiAvailability Availability, string ProviderName, 
     public bool IsAvailable => Availability == AiAvailability.Available;
 }
 
+/// <summary>Raised when the main AI service failed before answering and a backup service answers instead.</summary>
+public sealed class AiFallbackEventArgs(string failedProvider, string backupProvider, bool backupIsCloud, AiErrorKind reason) : EventArgs
+{
+    public string FailedProvider { get; } = failedProvider;
+    public string BackupProvider { get; } = backupProvider;
+    public bool BackupIsCloud { get; } = backupIsCloud;
+    public AiErrorKind Reason { get; } = reason;
+}
+
 /// <summary>Conversational AI used for free-form dialogue. Never executes commands.</summary>
 public interface IConversationAi
 {
+    /// <summary>Raised (before any backup token is returned) when a backup service takes over a request.</summary>
+    event EventHandler<AiFallbackEventArgs>? FallbackUsed;
+
     /// <summary>Human readable name of the provider that will be used, e.g. "BgGPT".</summary>
     string ActiveProviderName { get; }
     bool ActiveProviderIsCloud { get; }

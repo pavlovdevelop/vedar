@@ -29,11 +29,15 @@ public partial class SettingsWindow : Window
 
     private void OnApiKeyChanged(object sender, RoutedEventArgs e) => ViewModel.PendingApiKey = ApiKeyBox.Password;
 
+    private void OnGroqKeyChanged(object sender, RoutedEventArgs e) => ViewModel.PendingGroqKey = GroqKeyBox.Password;
+
     private async void OnSave(object sender, RoutedEventArgs e)
     {
         ViewModel.PendingApiKey = string.IsNullOrWhiteSpace(ApiKeyBox.Password) ? null : ApiKeyBox.Password;
+        ViewModel.PendingGroqKey = string.IsNullOrWhiteSpace(GroqKeyBox.Password) ? null : GroqKeyBox.Password;
         var ok = await ViewModel.SaveAsync();
         ApiKeyBox.Clear();
+        GroqKeyBox.Clear();
         if (ok)
         {
             DialogResult = true;

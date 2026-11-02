@@ -187,6 +187,23 @@ public class OrchestratorTests
     }
 
     [Fact]
+    public async Task Switch_to_the_backup_AI_is_announced_before_its_answer()
+    {
+        await using var h = new OrchestratorHarness();
+        await h.StartAsync();
+        h.Ai.ReplyAfterFallback("BgGPT", "Groq", "Софийският университет е основан ", "през хиляда осемстотин осемдесет и осма година.");
+
+        await h.Orchestrator.SubmitTextAsync("Кога е основан Софийският университет?");
+        await h.IdleAsync();
+
+        var spoken = h.Spoken;
+        var notice = spoken.IndexOf("BgGPT не отговаря, затова ще отговори резервният модел Groq.", StringComparison.Ordinal);
+        Assert.True(notice >= 0, spoken);
+        Assert.Contains("Въпросът се изпраща към Groq през интернет.", spoken);
+        Assert.True(notice < spoken.IndexOf("Софийският университет е основан", StringComparison.Ordinal), "the notice comes first");
+    }
+
+    [Fact]
     public async Task Unknown_request_is_answered_by_AI_with_streaming_speech_and_cloud_notice()
     {
         await using var h = new OrchestratorHarness();

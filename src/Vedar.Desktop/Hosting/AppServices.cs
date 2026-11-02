@@ -80,7 +80,8 @@ public sealed class AppServices : IAsyncDisposable
         var chatClient = new OpenAiCompatibleChatClient(http, factory.CreateLogger<OpenAiCompatibleChatClient>());
         var bggpt = new BgGptProvider(chatClient, settings, secrets, factory.CreateLogger<BgGptProvider>());
         var ollama = new OllamaProvider(chatClient, http, settings, factory.CreateLogger<OllamaProvider>());
-        var ai = new AiRouter(settings, bggpt, ollama, factory.CreateLogger<AiRouter>());
+        var groq = new GroqProvider(chatClient, settings, secrets, factory.CreateLogger<GroqProvider>());
+        var ai = new AiRouter(settings, bggpt, ollama, factory.CreateLogger<AiRouter>(), groq);
 
         var system = new WindowsSystemActions(new WindowsSystemVolume(), factory.CreateLogger<WindowsSystemActions>());
         var commands = new CommandDispatcher(settings, system, uiHost, ai, history, loc, factory.CreateLogger<CommandDispatcher>(), isWakeToken: wake.IsWakeToken);

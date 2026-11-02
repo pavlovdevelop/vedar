@@ -19,5 +19,7 @@
   "settings.cancel": "_Cancel",
   "tray.show": "Show VEDAR",
   "tray.exit": "Exit",
-  "settings.ai.testDetail": "(Details: {0})"
+  "settings.ai.testDetail": "(Details: {0})",
+  "speech.ai.fallback": "{0} is not answering, so the backup model {1} will answer.",
+  "speech.ai.fallbackCloud": "The question is sent to {0} over the internet."
 }
