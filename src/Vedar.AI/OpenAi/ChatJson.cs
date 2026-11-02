@@ -96,6 +96,12 @@ public static class ChatJson
             {
                 return d.ToString();
             }
+
+            // API gateways (e.g. Kong in front of BgGPT): {"message": "Unauthorized", "request_id": "…"}
+            if (doc.RootElement.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.String)
+            {
+                return msg.GetString();
+            }
         }
         catch (JsonException)
         {

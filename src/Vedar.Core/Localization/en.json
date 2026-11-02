@@ -18,5 +18,6 @@
   "settings.save": "_Save",
   "settings.cancel": "_Cancel",
   "tray.show": "Show VEDAR",
-  "tray.exit": "Exit"
+  "tray.exit": "Exit",
+  "settings.ai.testDetail": "(Details: {0})"
 }

@@ -11,5 +11,6 @@
     <ProjectReference Include="..\..\src\Vedar.Audio\Vedar.Audio.csproj" />
     <ProjectReference Include="..\..\src\Vedar.Speech\Vedar.Speech.csproj" />
     <ProjectReference Include="..\..\src\Vedar.Commands\Vedar.Commands.csproj" />
+    <ProjectReference Include="..\..\src\Vedar.AI\Vedar.AI.csproj" />
   </ItemGroup>
 </Project>

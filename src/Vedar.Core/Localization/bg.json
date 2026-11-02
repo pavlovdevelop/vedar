@@ -230,6 +230,7 @@
   "settings.ai.maxTokens": "Максимална дължина на отговора (токени)",
   "settings.ai.test": "Провери _връзката",
   "settings.ai.testing": "Проверявам връзката…",
+  "settings.ai.testDetail": "(Подробности: {0})",
   "settings.ai.announceCloud": "Напомняй, когато текстът се изпраща към облачна услуга",
   "settings.ai.resources": "Памет на компютъра: {0} GB. {1}",
   "settings.ai.ollamaNotInstalled": "Ollama не е открита на този компютър. Не е задължителна — инсталирай я само ако искаш локален изкуствен интелект.",

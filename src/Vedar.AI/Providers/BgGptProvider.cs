@@ -48,7 +48,9 @@ public sealed class BgGptProvider : IChatProvider
     {
         try
         {
-            return _secrets.Get(SecretNames.BgGptApiKey);
+            // Also repairs keys saved by earlier versions with a pasted "Bearer " prefix, quotes or line breaks.
+            var key = ApiKeyText.Normalize(_secrets.Get(SecretNames.BgGptApiKey));
+            return key.Length == 0 ? null : key;
         }
         catch (Exception ex)
         {
@@ -65,25 +67,8 @@ public sealed class BgGptProvider : IChatProvider
             return new AiStatus(AiAvailability.MissingApiKey, Name, true, "No API key.");
         }
 
-        var ai = _settings.Current.Ai;
-        try
-        {
-            await _client.ListModelsAsync(OpenAiCompatibleChatClient.Combine(ai.BgGptEndpoint, "models"), key, Name, cancellationToken).ConfigureAwait(false);
-            return new AiStatus(AiAvailability.Available, Name, true, ai.BgGptModel);
-        }
-        catch (AiProviderException ex) when (ex.Kind is AiErrorKind.NotConfigured or AiErrorKind.InvalidResponse)
-        {
-            // Some OpenAI-compatible servers do not implement /models; fall back to a 1-token request.
-            return await ProbeWithChatAsync(key, cancellationToken).ConfigureAwait(false);
-        }
-        catch (AiProviderException ex)
-        {
-            return new AiStatus(ToAvailability(ex.Kind), Name, true, ex.Message);
-        }
-    }
-
-    private async Task<AiStatus> ProbeWithChatAsync(string key, CancellationToken cancellationToken)
-    {
+        // Only POST /chat/completions is documented by BgGPT; /models may be refused for ordinary keys, which
+        // would wrongly look like a rejected key. A 1-token request checks the address, the key and the model.
         var ai = _settings.Current.Ai;
         try
         {
@@ -93,10 +78,12 @@ public sealed class BgGptProvider : IChatProvider
                 break;
             }
 
+            _logger.LogInformation("BgGPT connection check succeeded ({Model}).", ai.BgGptModel);
             return new AiStatus(AiAvailability.Available, Name, true, ai.BgGptModel);
         }
         catch (AiProviderException ex)
         {
+            _logger.LogWarning("BgGPT connection check failed: {Kind}. {Message}", ex.Kind, ex.Message);
             return new AiStatus(ToAvailability(ex.Kind), Name, true, ex.Message);
         }
     }

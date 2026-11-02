@@ -256,7 +256,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         {
             try
             {
-                _services.Secrets.Set(SecretNames.BgGptApiKey, PendingApiKey.Trim());
+                _services.Secrets.Set(SecretNames.BgGptApiKey, ApiKeyText.Normalize(PendingApiKey));
                 PendingApiKey = null;
             }
             catch (Exception ex)
@@ -362,7 +362,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         {
             if (!string.IsNullOrWhiteSpace(PendingApiKey))
             {
-                _services.Secrets.Set(SecretNames.BgGptApiKey, PendingApiKey.Trim());
+                _services.Secrets.Set(SecretNames.BgGptApiKey, ApiKeyText.Normalize(PendingApiKey));
                 PendingApiKey = null;
                 UpdateKeyStatus();
             }
@@ -381,15 +381,19 @@ public sealed partial class SettingsViewModel : ObservableObject
             live.Ai.BgGptModel = backup.Ai.BgGptModel;
             live.Ai.OllamaEndpoint = backup.Ai.OllamaEndpoint;
             live.Ai.OllamaModel = backup.Ai.OllamaModel;
-            AiTestResult = status.Availability switch
+            var summary = status.Availability switch
             {
                 AiAvailability.Available => _loc.Format("ai.status.available", status.ProviderName),
                 AiAvailability.MissingApiKey => _loc.Format("ai.status.missingKey", status.ProviderName),
                 AiAvailability.Offline => _loc.Format("speech.ai.offline", status.ProviderName),
                 AiAvailability.Unauthorized => _loc.Format("speech.ai.unauthorized", status.ProviderName),
                 AiAvailability.NotConfigured => _loc["ai.status.notConfigured"],
-                _ => _loc.Format("ai.status.unavailable", status.ProviderName) + " " + status.Detail,
+                _ => _loc.Format("ai.status.unavailable", status.ProviderName),
             };
+            // The technical reason (HTTP status, server message, network error) helps to find the cause. It never contains the key.
+            AiTestResult = status.IsAvailable || string.IsNullOrWhiteSpace(status.Detail)
+                ? summary
+                : summary + " " + _loc.Format("settings.ai.testDetail", status.Detail);
         }
         catch (Exception ex)
         {

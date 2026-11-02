@@ -207,8 +207,8 @@ public sealed class OpenAiCompatibleChatClient
         var status = (int)response.StatusCode;
         var ex = response.StatusCode switch
         {
-            HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => new AiProviderException(AiErrorKind.Unauthorized, $"{provider}: access denied ({status})."),
-            HttpStatusCode.TooManyRequests => new AiProviderException(AiErrorKind.RateLimited, $"{provider}: rate limited."),
+            HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => new AiProviderException(AiErrorKind.Unauthorized, $"{provider}: access denied (HTTP {status}). {detail}".TrimEnd()),
+            HttpStatusCode.TooManyRequests => new AiProviderException(AiErrorKind.RateLimited, $"{provider}: rate limited (HTTP 429). {detail}".TrimEnd()),
             HttpStatusCode.RequestTimeout or HttpStatusCode.GatewayTimeout => new AiProviderException(AiErrorKind.Timeout, $"{provider}: timeout ({status})."),
             HttpStatusCode.NotFound when detail?.Contains("model", StringComparison.OrdinalIgnoreCase) == true =>
                 new AiProviderException(AiErrorKind.ModelNotFound, $"{provider}: model not found. {detail}"),
@@ -243,7 +243,8 @@ public sealed class OpenAiCompatibleChatClient
             _ when ex.StatusCode is { } code && (int)code >= 500 => AiErrorKind.ServerError,
             _ => AiErrorKind.NoConnection,
         };
-        return new AiProviderException(kind, $"{provider}: cannot connect ({ex.HttpRequestError}).", ex);
+        var reason = (socket?.Message ?? ex.InnerException?.Message ?? ex.Message).Trim();
+        return new AiProviderException(kind, $"{provider}: cannot connect ({ex.HttpRequestError}: {reason}).", ex);
     }
 
     /// <summary>GET {base}/models. Returns the model ids, or throws a mapped exception.</summary>

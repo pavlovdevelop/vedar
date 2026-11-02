@@ -30,6 +30,7 @@ if (args.Length == 0)
           bench-wakedetect [wakeModel] [ctx]           Wake-word detection rate on synthetic commands (with 300 ms pre-roll)
           bench-vad [minutes]                          CPU cost of continuous listening (VAD only)
           bench-rate [repeats]                         Speech duration at each speaking rate (Piper is stochastic: averaged)
+          check-bggpt [endpoint] [model]               Connection check exactly as VEDAR does it; key from env VEDAR_BGGPT_KEY
         Models are searched in ./models, the app folder and VEDAR_MODELS_DIR.
         """);
     return 1;
@@ -118,6 +119,26 @@ switch (args[0])
         }
 
         return 0;
+    }
+
+    case "check-bggpt":
+    {
+        // The key is read from the environment only, so it never lands in the shell history or in a log.
+        var key = Environment.GetEnvironmentVariable("VEDAR_BGGPT_KEY");
+        var secrets = new Vedar.Infrastructure.Security.InMemorySecretStore();
+        if (!string.IsNullOrWhiteSpace(key))
+        {
+            secrets.Set(SecretNames.BgGptApiKey, key);
+        }
+
+        if (args.Length > 1) { settings.Current.Ai.BgGptEndpoint = args[1]; }
+        if (args.Length > 2) { settings.Current.Ai.BgGptModel = args[2]; }
+        using var http = Vedar.AI.OpenAi.OpenAiCompatibleChatClient.CreateHttpClient();
+        var client = new Vedar.AI.OpenAi.OpenAiCompatibleChatClient(http, NullLogger.Instance);
+        var provider = new Vedar.AI.Providers.BgGptProvider(client, settings, secrets, NullLogger<Vedar.AI.Providers.BgGptProvider>.Instance);
+        var status = await provider.CheckStatusAsync(CancellationToken.None);
+        Console.WriteLine($"{settings.Current.Ai.BgGptEndpoint} ({settings.Current.Ai.BgGptModel}): {status.Availability} — {status.Detail}");
+        return status.IsAvailable ? 0 : 2;
     }
 
     case "transcribe":

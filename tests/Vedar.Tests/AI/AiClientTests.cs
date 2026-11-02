@@ -276,6 +276,7 @@ public class OpenAiClientTests : IAsyncLifetime
         var endpoint = new ChatEndpoint(new Uri($"http://127.0.0.1:{port}/v1/chat/completions"), "k", "BgGPT", TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), 1);
         var ex = await Assert.ThrowsAsync<AiProviderException>(() => Collect(Client().StreamAsync(endpoint, Request(), CancellationToken.None)));
         Assert.Equal(AiErrorKind.NoConnection, ex.Kind);
+        Assert.Contains("ConnectionError", ex.Message); // the technical reason is shown by "Провери връзката"
     }
 
     [Fact]
@@ -352,36 +353,37 @@ public class ProviderTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task BgGpt_status_uses_models_endpoint()
+    public async Task BgGpt_status_uses_the_documented_chat_endpoint_with_one_token()
     {
-        _server.Handler = (ctx, _) =>
-        {
-            ctx.Response.ContentType = "application/json";
-            return ctx.Response.WriteAsync("{\"data\":[{\"id\":\"bggpt-gemma-3-27b-fp8\"}]}");
-        };
+        _server.Handler = (ctx, _) => MockHttpServer.WriteSseAsync(ctx, ["З"]);
         var (_, _, bggpt, _, _) = Create(AiProviderKind.BgGpt, withKey: true);
         var status = await bggpt.CheckStatusAsync(CancellationToken.None);
         Assert.Equal(AiAvailability.Available, status.Availability);
         Assert.True(status.IsCloud);
-        Assert.Equal("/v1/models", _server.Requests.Single().Path);
+        var request = _server.Requests.Single();
+        Assert.Equal("/v1/chat/completions", request.Path);
+        Assert.Contains("\"max_tokens\":1", request.Body);
+        Assert.Contains("\"model\":\"bggpt-gemma-3-27b-fp8\"", request.Body);
+        Assert.Equal("Bearer key-abcdef123456", request.Authorization);
     }
 
     [Fact]
-    public async Task BgGpt_status_falls_back_to_a_tiny_chat_request_if_models_is_missing()
+    public async Task BgGpt_key_is_accepted_even_if_models_endpoint_is_refused()
     {
+        // Regression: a gateway that refuses GET /models for ordinary keys made a valid key look rejected.
         _server.Handler = (ctx, _) =>
         {
             if (ctx.Request.Path.Value!.EndsWith("/models"))
             {
-                ctx.Response.StatusCode = 404;
-                return Task.CompletedTask;
+                ctx.Response.StatusCode = 403;
+                return ctx.Response.WriteAsync("{\"message\":\"You cannot consume this service\"}");
             }
 
             return MockHttpServer.WriteSseAsync(ctx, ["З"]);
         };
         var (_, _, bggpt, _, _) = Create(AiProviderKind.BgGpt, withKey: true);
         Assert.Equal(AiAvailability.Available, (await bggpt.CheckStatusAsync(CancellationToken.None)).Availability);
-        Assert.Contains(_server.Requests, r => r.Path == "/v1/chat/completions" && r.Body.Contains("\"max_tokens\":1"));
+        Assert.DoesNotContain(_server.Requests, r => r.Path.EndsWith("/models"));
     }
 
     [Fact]
@@ -390,6 +392,39 @@ public class ProviderTests : IAsyncLifetime
         _server.Handler = (ctx, _) => { ctx.Response.StatusCode = 401; return Task.CompletedTask; };
         var (_, _, bggpt, _, _) = Create(AiProviderKind.BgGpt, withKey: true);
         Assert.Equal(AiAvailability.Unauthorized, (await bggpt.CheckStatusAsync(CancellationToken.None)).Availability);
+    }
+
+    [Fact]
+    public async Task BgGpt_gateway_error_message_is_shown_in_the_status_detail()
+    {
+        // The real api.bggpt.ai answers like this for a wrong key (Kong gateway format).
+        _server.Handler = (ctx, _) =>
+        {
+            ctx.Response.StatusCode = 401;
+            ctx.Response.ContentType = "application/json; charset=utf-8";
+            return ctx.Response.WriteAsync("{\n  \"message\":\"Unauthorized\",\n  \"request_id\":\"414c1455ba728012a19bc345abc07d74\"\n}");
+        };
+        var (_, _, bggpt, _, _) = Create(AiProviderKind.BgGpt, withKey: true);
+        var status = await bggpt.CheckStatusAsync(CancellationToken.None);
+        Assert.Equal(AiAvailability.Unauthorized, status.Availability);
+        Assert.Contains("HTTP 401", status.Detail);
+        Assert.Contains("Unauthorized", status.Detail);
+        Assert.DoesNotContain("key-abcdef123456", status.Detail);
+    }
+
+    [Theory]
+    [InlineData("Bearer key-abcdef123456")]
+    [InlineData("Authorization: Bearer key-abcdef123456")]
+    [InlineData("  \"key-abcdef123456\"\r\n")]
+    [InlineData("key-abcdef\u200B123456")]
+    [InlineData("key-abcdef\n123456")]
+    public async Task Pasted_key_with_prefix_quotes_or_invisible_characters_is_cleaned(string pasted)
+    {
+        _server.Handler = (ctx, _) => MockHttpServer.WriteSseAsync(ctx, ["З"]);
+        var (_, secrets, bggpt, _, _) = Create(AiProviderKind.BgGpt, withKey: false);
+        secrets.Set(SecretNames.BgGptApiKey, pasted); // as saved by an older version
+        Assert.Equal(AiAvailability.Available, (await bggpt.CheckStatusAsync(CancellationToken.None)).Availability);
+        Assert.Equal("Bearer key-abcdef123456", _server.Requests.Single().Authorization);
     }
 
     [Fact]
@@ -486,4 +521,23 @@ public class ProviderTests : IAsyncLifetime
         Assert.Equal(AiAvailability.NotConfigured, (await router.CheckStatusAsync(CancellationToken.None)).Availability);
         await Assert.ThrowsAsync<AiProviderException>(() => Collect(router.StreamReplyAsync([ChatMessage.User("а")], CancellationToken.None)));
     }
+}
+
+public class ApiKeyTextTests
+{
+    [Theory]
+    [InlineData("abc-123_XYZ", "abc-123_XYZ")]
+    [InlineData("  abc-123  ", "abc-123")]
+    [InlineData("Bearer abc-123", "abc-123")]
+    [InlineData("bearer   abc-123", "abc-123")]
+    [InlineData("Authorization: Bearer abc-123", "abc-123")]
+    [InlineData("\"abc-123\"", "abc-123")]
+    [InlineData("„abc-123“", "abc-123")]
+    [InlineData("abc-\r\n123", "abc-123")]
+    [InlineData("\uFEFFabc-123\u200B", "abc-123")]
+    [InlineData("BearerToken123", "BearerToken123")] // a key that merely starts with "Bearer" is kept
+    [InlineData("", "")]
+    [InlineData("   ", "")]
+    [InlineData(null, "")]
+    public void Normalize(string? pasted, string expected) => Assert.Equal(expected, ApiKeyText.Normalize(pasted));
 }
