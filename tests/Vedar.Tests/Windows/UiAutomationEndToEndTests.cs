@@ -77,21 +77,31 @@ public class UiAutomationEndToEndTests
 
             var buttons = window.FindAllDescendants(cf => cf.ByControlType(ControlType.Button));
             var focusable = buttons.Where(b => b.Properties.IsKeyboardFocusable.ValueOrDefault).ToList();
-            Assert.True(focusable.Count >= 6, $"VEDAR's own buttons are reachable with the keyboard ({focusable.Count} found)");
+            foreach (var expected in new[] { "Говори", "Спри", "Настройки" })
+            {
+                Assert.Contains(focusable, b => b.Name == expected);
+            }
+
             Assert.All(focusable, b => Assert.False(string.IsNullOrWhiteSpace(b.Name), "every keyboard-reachable button has an accessible name"));
             // The only unnamed buttons allowed are the parts of WPF's built-in scroll bar (not keyboard-focusable).
             string[] scrollBarParts = ["PART_LineUpButton", "PART_LineDownButton", "PageUp", "PageDown", "PART_LineLeftButton", "PART_LineRightButton", "PageLeft", "PageRight"];
             Assert.All(buttons.Where(b => string.IsNullOrWhiteSpace(b.Name)), b => Assert.Contains(b.Properties.AutomationId.ValueOrDefault, scrollBarParts));
 
-            // Keyboard: Alt+Н opens the settings window.
+            // Keyboard: focus "Настройки" and press Space (Alt+Н needs a Bulgarian keyboard layout, which CI does not have).
             window.Focus();
-            Keyboard.TypeSimultaneously(VirtualKeyShort.ALT, (VirtualKeyShort)'Н');
+            settings!.Focus();
+            Keyboard.Type(VirtualKeyShort.SPACE);
             var settingsWindow = Retry.WhileNull(() => app.GetAllTopLevelWindows(automation).FirstOrDefault(w => w.Name.Contains("Настройки")), TimeSpan.FromSeconds(10)).Result;
+            var openedWith = "keyboard (Space)";
             if (settingsWindow is null)
             {
-                settings!.AsButton().Invoke(); // keyboard layouts on CI may differ; fall back to the UIA Invoke pattern
+                // The CI desktop may refuse to give the window the foreground; fall back to the UIA Invoke pattern.
+                openedWith = "UI Automation Invoke";
+                settings!.AsButton().Invoke();
                 settingsWindow = Retry.WhileNull(() => app.GetAllTopLevelWindows(automation).FirstOrDefault(w => w.Name.Contains("Настройки")), TimeSpan.FromSeconds(10)).Result;
             }
+
+            TestContext.Current.TestOutputHelper?.WriteLine($"Settings window opened with: {openedWith}");
 
             Assert.NotNull(settingsWindow);
             var tabs = settingsWindow!.FindAllDescendants(cf => cf.ByControlType(ControlType.TabItem));
