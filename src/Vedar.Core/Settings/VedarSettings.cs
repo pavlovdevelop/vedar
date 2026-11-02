@@ -148,6 +148,8 @@ public sealed class ActivationSettings
     public int FollowUpSeconds { get; set; } = 8;
     /// <summary>How long to wait for a command after the wake word / push-to-talk before giving up.</summary>
     public int CommandListenTimeoutSeconds { get; set; } = 7;
+    /// <summary>While VEDAR speaks or thinks, listen only for "Ведар, спри" / "спри" / "стоп" and stop at once.</summary>
+    public bool VoiceStopWhileSpeaking { get; set; } = true;
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<AiProviderKind>))]

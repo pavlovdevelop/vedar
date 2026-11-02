@@ -170,6 +170,44 @@ public class VoiceListenerTests
     }
 
     [Fact]
+    public async Task While_suppressed_only_barge_in_pieces_are_reported()
+    {
+        var (listener, input, _) = Create();
+        var utterances = 0;
+        var pieces = new List<UtteranceEventArgs>();
+        listener.UtteranceCaptured += (_, _) => utterances++;
+        listener.BargeInCaptured += (_, e) => pieces.Add(e);
+        await listener.SetModeAsync(ListeningMode.WakeWord, CancellationToken.None);
+        listener.Suppressed = true;
+
+        await input.FeedAsync(Utterance());
+        Assert.Empty(pieces); // barge-in is off
+
+        listener.BargeInEnabled = true;
+        await input.FeedAsync(Utterance());
+        listener.BargeInEnabled = false;
+        await input.FeedAsync(Utterance());
+
+        Assert.Equal(0, utterances); // normal commands stay suppressed while VEDAR speaks
+        var piece = Assert.Single(pieces);
+        Assert.InRange(piece.Duration.TotalSeconds, 1.0, 2.0);
+    }
+
+    [Fact]
+    public async Task Barge_in_pieces_are_at_most_four_seconds()
+    {
+        var (listener, input, _) = Create();
+        var pieces = new List<UtteranceEventArgs>();
+        listener.BargeInCaptured += (_, e) => pieces.Add(e);
+        await listener.SetModeAsync(ListeningMode.Command, CancellationToken.None);
+        listener.Suppressed = true;
+        listener.BargeInEnabled = true;
+        await input.FeedAsync(Signals.Concat(Signals.Noise(0.5, 0.002f), Signals.Speechlike(9), Signals.Noise(1, 0.002f)));
+        Assert.True(pieces.Count >= 2, $"{pieces.Count} pieces");
+        Assert.All(pieces, p => Assert.True(p.Duration.TotalSeconds <= 4.05, $"{p.Duration.TotalSeconds:F2} s")); // 4 s + one 30 ms frame
+    }
+
+    [Fact]
     public async Task Discards_audio_while_suppressed()
     {
         var (listener, input, _) = Create();

@@ -173,6 +173,82 @@ public class OrchestratorTests
     }
 
     [Fact]
+    public async Task Saying_Vedar_stop_while_it_speaks_stops_immediately()
+    {
+        await using var h = new OrchestratorHarness();
+        h.Output.Instant = false;
+        await h.StartAsync();
+        h.Recognizer.Responder = (_, r) => r.Purpose == RecognitionPurpose.WakeWord ? "Ведар, спри!" : string.Empty;
+
+        _ = h.Orchestrator.SubmitTextAsync("помощ");
+        await Wait.UntilAsync(() => h.Orchestrator.State == AssistantState.Speaking && h.Listener.BargeInEnabled);
+        var sw = Stopwatch.StartNew();
+        Assert.True(h.Listener.EmitBargeIn());
+        await Wait.UntilAsync(() => !h.Orchestrator.IsTurnActive, 2000);
+        sw.Stop();
+
+        Assert.True(sw.ElapsedMilliseconds < 1000, $"voice stop took {sw.ElapsedMilliseconds} ms");
+        Assert.True(h.Output.CancelledCount >= 1);
+        Assert.Contains(h.Recognizer.Requests, r => r.Purpose == RecognitionPurpose.WakeWord); // the fast model
+        await h.IdleAsync();
+        Assert.Equal(AssistantState.Idle, h.Orchestrator.State);
+        Assert.False(h.Listener.BargeInEnabled);
+        Assert.False(h.Listener.Suppressed);
+    }
+
+    [Fact]
+    public async Task Hearing_its_own_voice_while_speaking_does_not_stop_it()
+    {
+        await using var h = new OrchestratorHarness();
+        h.Output.Instant = false;
+        await h.StartAsync();
+        string? firstSentence = null;
+        h.Recognizer.Responder = (_, r) => r.Purpose == RecognitionPurpose.WakeWord ? firstSentence ?? string.Empty : string.Empty;
+
+        _ = h.Orchestrator.SubmitTextAsync("помощ");
+        await Wait.UntilAsync(() => h.Orchestrator.State == AssistantState.Speaking && h.Listener.BargeInEnabled);
+        firstSentence = h.Synth.Spoken.First(); // the echo of what VEDAR is saying
+        Assert.True(h.Listener.EmitBargeIn(3));
+        await Wait.UntilAsync(() => h.Recognizer.Requests.Any(r => r.Purpose == RecognitionPurpose.WakeWord), 2000);
+        await Task.Delay(300);
+
+        Assert.True(h.Orchestrator.IsTurnActive, "still speaking");
+        Assert.Equal(0, h.Output.CancelledCount);
+        h.Orchestrator.Stop();
+        await h.IdleAsync();
+    }
+
+    [Fact]
+    public async Task Voice_stop_also_cancels_an_AI_answer_that_is_still_coming()
+    {
+        await using var h = new OrchestratorHarness();
+        await h.StartAsync();
+        h.Recognizer.Responder = (_, r) => r.Purpose == RecognitionPurpose.WakeWord ? "Стоп." : string.Empty;
+        h.Ai.ReplySlowly(TimeSpan.FromSeconds(5), "Това ", "е ", "дълъг ", "отговор.");
+
+        _ = h.Orchestrator.SubmitTextAsync("Разкажи ми дълга история.");
+        await Wait.UntilAsync(() => h.Orchestrator.State == AssistantState.Processing && h.Listener.BargeInEnabled, 3000);
+        Assert.True(h.Listener.EmitBargeIn());
+        await Wait.UntilAsync(() => !h.Orchestrator.IsTurnActive, 2000);
+        await h.IdleAsync();
+        Assert.DoesNotContain("дълъг", h.Spoken);
+    }
+
+    [Fact]
+    public async Task Voice_stop_can_be_switched_off()
+    {
+        await using var h = new OrchestratorHarness(s => s.Activation.VoiceStopWhileSpeaking = false);
+        h.Output.Instant = false;
+        await h.StartAsync();
+        _ = h.Orchestrator.SubmitTextAsync("помощ");
+        await Wait.UntilAsync(() => h.Orchestrator.State == AssistantState.Speaking);
+        Assert.False(h.Listener.BargeInEnabled);
+        Assert.False(h.Listener.EmitBargeIn());
+        h.Orchestrator.Stop();
+        await h.IdleAsync();
+    }
+
+    [Fact]
     public async Task Push_to_talk_while_speaking_interrupts_and_starts_listening()
     {
         await using var h = new OrchestratorHarness();

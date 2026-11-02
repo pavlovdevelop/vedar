@@ -164,9 +164,23 @@ public sealed class FakeVoiceListener : IVoiceListener
     public int FinishCount { get; private set; }
 
     public event EventHandler<UtteranceEventArgs>? UtteranceCaptured;
+    public event EventHandler<UtteranceEventArgs>? BargeInCaptured;
     public event EventHandler? SpeechStarted;
     public event EventHandler? CommandTimeout;
     public event EventHandler<AudioDeviceErrorEventArgs>? MicrophoneError;
+    public bool BargeInEnabled { get; set; }
+
+    /// <summary>Simulates a short piece of audio heard while VEDAR speaks. Returns false if it would not be reported.</summary>
+    public bool EmitBargeIn(float seconds = 1.0f)
+    {
+        if (Mode == ListeningMode.Off || !Suppressed || !BargeInEnabled)
+        {
+            return false;
+        }
+
+        BargeInCaptured?.Invoke(this, new UtteranceEventArgs(new float[(int)(16000 * seconds)], Mode, true));
+        return true;
+    }
 
     public Task SetModeAsync(ListeningMode mode, CancellationToken cancellationToken)
     {

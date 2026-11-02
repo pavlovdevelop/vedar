@@ -90,6 +90,9 @@
                         <CheckBox Content="{l:Loc settings.handsFree}" IsChecked="{Binding HandsFree}" AutomationProperties.Name="{l:Loc settings.handsFree}"
                                   AutomationProperties.HelpText="{l:Loc settings.handsFree.help}"/>
                         <TextBlock Text="{l:Loc settings.handsFree.help}" Style="{StaticResource Vedar.Muted}"/>
+                        <CheckBox x:Name="VoiceStopBox" Content="{l:Loc settings.voiceStop}" IsChecked="{Binding VoiceStopWhileSpeaking}" AutomationProperties.Name="{l:Loc settings.voiceStop}"
+                                  AutomationProperties.HelpText="{l:Loc settings.voiceStop.help}"/>
+                        <TextBlock Text="{l:Loc settings.voiceStop.help}" Style="{StaticResource Vedar.Muted}" TextWrapping="Wrap"/>
                         <TextBlock Text="{l:Loc settings.hotkey.help}" Style="{StaticResource Vedar.Muted}"/>
                         <Label Content="{l:Loc settings.hotkey.talk}" Target="{Binding ElementName=TalkHotkeyBox}"/>
                         <c:HotkeyBox x:Name="TalkHotkeyBox" Hotkey="{Binding PushToTalkHotkey}" AutomationProperties.Name="{l:Loc settings.hotkey.talk}"

@@ -65,6 +65,11 @@ public interface IVoiceListener : IDisposable
     ListeningMode Mode { get; }
     /// <summary>When true, captured audio is discarded (used while VEDAR is speaking to avoid hearing itself).</summary>
     bool Suppressed { get; set; }
+    /// <summary>
+    /// While <see cref="Suppressed"/>, still cut the audio into short pieces (at most 4 s) and report them through
+    /// <see cref="BargeInCaptured"/> — only so that "Ведар, спри" can stop VEDAR while it speaks.
+    /// </summary>
+    bool BargeInEnabled { get; set; }
     /// <summary>Current input level 0..1 (for the microphone meter).</summary>
     float Level { get; }
 
@@ -75,6 +80,8 @@ public interface IVoiceListener : IDisposable
     Task RestartAsync(CancellationToken cancellationToken);
 
     event EventHandler<UtteranceEventArgs>? UtteranceCaptured;
+    /// <summary>A short piece of audio heard while suppressed (see <see cref="BargeInEnabled"/>).</summary>
+    event EventHandler<UtteranceEventArgs>? BargeInCaptured;
     event EventHandler? SpeechStarted;
     /// <summary>No speech started within the command timeout.</summary>
     event EventHandler? CommandTimeout;
@@ -90,4 +97,7 @@ public sealed record WakeWordMatch(bool IsMatch, string Command, string MatchedT
 public interface IWakeWordMatcher
 {
     WakeWordMatch Match(string transcript);
+
+    /// <summary>True for a single (normalized) word that is the wake word or one of its usual misspellings.</summary>
+    bool IsWakeToken(string token);
 }

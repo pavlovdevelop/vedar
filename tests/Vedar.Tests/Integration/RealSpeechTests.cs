@@ -210,6 +210,90 @@ public class RealSpeechTests(RealSpeechFixture fx, ITestOutputHelper output) : I
         Assert.True(intentOk >= cases.Length * 0.8, $"intent accuracy {intentOk}/{cases.Length}");
         Assert.True(wakeOk >= cases.Length * 0.8, $"wake word detection {wakeOk}/{cases.Length}");
     }
+
+    private const string LongAnswer = "Софийският университет е основан през хиляда осемстотин осемдесет и осма година. Той е най-старото висше училище в България и днес в него учат десетки хиляди студенти.";
+
+    private async Task<string> HearWhileSpeakingAsync(float[] piece)
+    {
+        var result = await fx.Recognizer!.RecognizeAsync(piece, new RecognitionRequest(RecognitionPurpose.WakeWord, RecognitionPrompts.WakeWord), CancellationToken.None);
+        return result.Text;
+    }
+
+    [Fact]
+    public async Task Voice_stop_real_models_user_alone_is_recognized()
+    {
+        SkipIfNoModels();
+        var wake = new WakeWordMatcher();
+        int stops = 0;
+        foreach (var (phrase, rate) in new[] { ("Ведар, спри!", 1.0f), ("Ведар, спри!", 1.15f), ("Спри!", 1.0f), ("Стоп!", 1.0f), ("Ведар, стига!", 1.0f) })
+        {
+            var user = StreamingResampler.Resample(await fx.SynthesizeAsync(phrase, rate), 22050, 16000);
+            var piece = new float[3200].Concat(user).Concat(new float[3200]).ToArray();
+            var heard = await HearWhileSpeakingAsync(piece);
+            var stop = Vedar.Core.Text.StopPhraseDetector.IsStopRequest(heard, LongAnswer, wake.IsWakeToken);
+            output.WriteLine($"'{phrase}' x{rate} -> '{heard}' -> stop: {stop}");
+            stops += stop ? 1 : 0;
+        }
+
+        // Measured over 5 runs: 22/25 (Piper's voice varies from run to run).
+        Assert.True(stops >= 3, $"{stops}/5 stop phrases recognised (synthetic voice, as with headphones)");
+        output.WriteLine($"recognised {stops}/5");
+    }
+
+    [Fact]
+    public async Task Voice_stop_real_models_own_voice_never_stops()
+    {
+        SkipIfNoModels();
+        var wake = new WakeWordMatcher();
+        var answer = StreamingResampler.Resample(await fx.SynthesizeAsync(LongAnswer), 22050, 16000);
+        // The microphone hears VEDAR through the speakers: 4-second pieces, as the listener cuts them.
+        for (int start = 0; start < answer.Length; start += 4 * 16000)
+        {
+            var piece = answer.AsSpan(start, Math.Min(4 * 16000, answer.Length - start)).ToArray();
+            var heard = await HearWhileSpeakingAsync(piece);
+            output.WriteLine($"echo {start / 16000.0:F0} s -> '{heard}'");
+            Assert.False(Vedar.Core.Text.StopPhraseDetector.IsStopRequest(heard, LongAnswer, wake.IsWakeToken), heard);
+        }
+    }
+
+    /// <remarks>
+    /// Speakers at a moderate distance: VEDAR's voice ~12 dB below the user's (measured over 5 runs: 13/15).
+    /// With louder speakers (~6 dB below) it was 7/15 — see docs/SPEECH_BENCHMARKS.md; not asserted here.
+    /// </remarks>
+    [Theory]
+    [InlineData(0.25f)]
+    public async Task Voice_stop_real_models_user_over_own_voice(float echoGain)
+    {
+        SkipIfNoModels();
+        var wake = new WakeWordMatcher();
+        var answer = StreamingResampler.Resample(await fx.SynthesizeAsync(LongAnswer), 22050, 16000);
+        var user = StreamingResampler.Resample(await fx.SynthesizeAsync("Ведар, спри!", 1.1f), 22050, 16000);
+        int stops = 0, tries = 0;
+        foreach (var offset in new[] { 0.5, 2.0, 5.0 })
+        {
+            var start = (int)(offset * 16000);
+            var piece = new float[Math.Min(4 * 16000, user.Length + 16000)];
+            for (int i = 0; i < piece.Length && start + i < answer.Length; i++)
+            {
+                piece[i] = answer[start + i] * echoGain;
+            }
+
+            for (int i = 0; i < user.Length && 8000 + i < piece.Length; i++)
+            {
+                piece[8000 + i] += user[i];
+            }
+
+            var heard = await HearWhileSpeakingAsync(piece);
+            var stop = Vedar.Core.Text.StopPhraseDetector.IsStopRequest(heard, LongAnswer, wake.IsWakeToken);
+            output.WriteLine($"echo x{echoGain} at {offset} s -> '{heard}' -> stop: {stop}");
+            stops += stop ? 1 : 0;
+            tries++;
+        }
+
+        // Same synthetic voice for VEDAR and "the user" is the hard case; a real user sounds different and is closer to the microphone.
+        output.WriteLine($"recognised {stops}/{tries}");
+        Assert.True(stops >= 2, $"{stops}/{tries} recognised over VEDAR's own voice at gain {echoGain}");
+    }
 }
 
 [CollectionDefinition("RealSpeech", DisableParallelization = true)]

@@ -68,6 +68,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _selectedSttModel = SttModels.FirstOrDefault(m => m.Value == s.Recognition.ModelFile) ?? SttModels[1];
 
         _handsFree = s.Activation.HandsFreeEnabled;
+        _voiceStopWhileSpeaking = s.Activation.VoiceStopWhileSpeaking;
         _pushToTalkHotkey = s.Activation.PushToTalkHotkey;
         _stopHotkey = s.Activation.StopHotkey;
         _micToggleHotkey = s.Activation.MicrophoneToggleHotkey;
@@ -134,6 +135,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _microphoneMuted;
     [ObservableProperty] private Option<string> _selectedSttModel;
     [ObservableProperty] private bool _handsFree;
+    [ObservableProperty] private bool _voiceStopWhileSpeaking;
     [ObservableProperty] private string _pushToTalkHotkey;
     [ObservableProperty] private string _stopHotkey;
     [ObservableProperty] private string _micToggleHotkey;
@@ -292,6 +294,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         s.Microphone.Muted = MicrophoneMuted;
         s.Recognition.ModelFile = SelectedSttModel.Value;
         s.Activation.HandsFreeEnabled = HandsFree;
+        s.Activation.VoiceStopWhileSpeaking = VoiceStopWhileSpeaking;
         s.Activation.PushToTalkHotkey = PushToTalkHotkey;
         s.Activation.StopHotkey = StopHotkey;
         s.Activation.MicrophoneToggleHotkey = MicToggleHotkey;

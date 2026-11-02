@@ -11,12 +11,16 @@ namespace Vedar.Speech.Vad;
 public sealed class VoiceListener : IVoiceListener
 {
     private const int PreRollFrames = 10; // 300 ms before speech start
+    private const int BargeInMaxSamples = 4 * AudioFrameEventArgs.SampleRate;
     private readonly IAudioInput _input;
     private readonly ISettingsStore _settings;
     private readonly ILogger<VoiceListener> _logger;
     private readonly object _gate = new();
     private readonly SemaphoreSlim _modeLock = new(1, 1);
     private readonly EnergyVoiceActivityDetector _vad = new();
+    private readonly EnergyVoiceActivityDetector _bargeVad = new() { HangoverFrames = 12 };
+    private readonly List<float> _bargeUtterance = [];
+    private bool _bargeIn;
     private readonly Queue<float[]> _preRoll = new();
     private readonly List<float> _utterance = [];
     private HighPassFilter _highPass = new(AudioFrameEventArgs.SampleRate);
@@ -58,6 +62,27 @@ public sealed class VoiceListener : IVoiceListener
     }
 
     public event EventHandler<UtteranceEventArgs>? UtteranceCaptured;
+    public event EventHandler<UtteranceEventArgs>? BargeInCaptured;
+
+    public bool BargeInEnabled
+    {
+        get { lock (_gate) { return _bargeIn; } }
+        set
+        {
+            lock (_gate)
+            {
+                if (_bargeIn == value)
+                {
+                    return;
+                }
+
+                _bargeIn = value;
+                _bargeUtterance.Clear();
+                _bargeVad.Reset();
+                _bargeVad.Sensitivity = _settings.Current.Microphone.Sensitivity;
+            }
+        }
+    }
     public event EventHandler? SpeechStarted;
     public event EventHandler? CommandTimeout;
     public event EventHandler<AudioDeviceErrorEventArgs>? MicrophoneError;
@@ -180,6 +205,7 @@ public sealed class VoiceListener : IVoiceListener
     private void OnFrame(object? sender, AudioFrameEventArgs e)
     {
         float[]? completed = null;
+        float[]? bargeIn = null;
         bool started = false;
         ListeningMode mode;
         var settings = _settings.Current.Microphone;
@@ -198,59 +224,32 @@ public sealed class VoiceListener : IVoiceListener
             var level = Math.Clamp((AudioMath.ToDecibels(rms) + 60f) / 60f, 0f, 1f);
             Volatile.Write(ref _level, 0.7f * _level + 0.3f * level);
 
-            if (mode == ListeningMode.Off || _suppressed)
+            if (mode == ListeningMode.Off)
             {
                 return;
             }
 
-            var max = MaxUtteranceSamples();
-            _vad.Process(samples, (evt, frame) =>
+            if (_suppressed)
             {
-                switch (evt)
+                if (_bargeIn)
                 {
-                    case VadEvent.SpeechStart:
-                        started = true;
-                        foreach (var pre in _preRoll)
-                        {
-                            _utterance.AddRange(pre);
-                        }
-
-                        _preRoll.Clear();
-                        _utterance.AddRange(frame);
-                        break;
-                    case VadEvent.SpeechEnd:
-                        _utterance.AddRange(frame);
-                        completed = _utterance.ToArray();
-                        _utterance.Clear();
-                        break;
-                    default:
-                        if (_vad.InSpeech)
-                        {
-                            _utterance.AddRange(frame);
-                            if (_utterance.Count >= max)
-                            {
-                                completed = _utterance.ToArray();
-                                _utterance.Clear();
-                                _vad.Reset();
-                            }
-                        }
-                        else
-                        {
-                            _preRoll.Enqueue(frame);
-                            while (_preRoll.Count > PreRollFrames)
-                            {
-                                _preRoll.Dequeue();
-                            }
-                        }
-
-                        break;
+                    bargeIn = CollectBargeIn(samples);
                 }
-            });
+            }
+            else
+            {
+                Detect(samples, ref started, ref completed);
+            }
 
             if (started && mode == ListeningMode.Command)
             {
                 StopCommandTimer();
             }
+        }
+
+        if (bargeIn is not null)
+        {
+            BargeInCaptured?.Invoke(this, new UtteranceEventArgs(bargeIn, mode, endedBySilence: true));
         }
 
         if (started)
@@ -276,11 +275,95 @@ public sealed class VoiceListener : IVoiceListener
         }
     }
 
+    /// <summary>Barge-in: short pieces of audio heard while VEDAR speaks. Called under the lock.</summary>
+    private float[]? CollectBargeIn(float[] samples)
+    {
+        float[]? piece = null;
+        _bargeVad.Process(samples, (evt, frame) =>
+        {
+            if (evt == VadEvent.SpeechStart || _bargeVad.InSpeech || evt == VadEvent.SpeechEnd)
+            {
+                _bargeUtterance.AddRange(frame);
+            }
+
+            if ((evt == VadEvent.SpeechEnd || _bargeUtterance.Count >= BargeInMaxSamples) && _bargeUtterance.Count > 0)
+            {
+                // At least 0.3 s: "спри" is short, clicks are shorter.
+                if (_bargeUtterance.Count >= AudioFrameEventArgs.SampleRate * 3 / 10)
+                {
+                    piece = _bargeUtterance.ToArray();
+                }
+
+                _bargeUtterance.Clear();
+                if (evt != VadEvent.SpeechEnd)
+                {
+                    _bargeVad.Reset();
+                }
+            }
+        });
+        return piece;
+    }
+
+    /// <summary>Normal utterance detection. Called under the lock.</summary>
+    private void Detect(float[] samples, ref bool startedOut, ref float[]? completedOut)
+    {
+        bool started = false;
+        float[]? completed = null;
+        var max = MaxUtteranceSamples();
+        _vad.Process(samples, (evt, frame) =>
+        {
+            switch (evt)
+            {
+                case VadEvent.SpeechStart:
+                    started = true;
+                    foreach (var pre in _preRoll)
+                    {
+                        _utterance.AddRange(pre);
+                    }
+
+                    _preRoll.Clear();
+                    _utterance.AddRange(frame);
+                    break;
+                case VadEvent.SpeechEnd:
+                    _utterance.AddRange(frame);
+                    completed = _utterance.ToArray();
+                    _utterance.Clear();
+                    break;
+                default:
+                    if (_vad.InSpeech)
+                    {
+                        _utterance.AddRange(frame);
+                        if (_utterance.Count >= max)
+                        {
+                            completed = _utterance.ToArray();
+                            _utterance.Clear();
+                            _vad.Reset();
+                        }
+                    }
+                    else
+                    {
+                        _preRoll.Enqueue(frame);
+                        while (_preRoll.Count > PreRollFrames)
+                        {
+                            _preRoll.Dequeue();
+                        }
+                    }
+
+                    break;
+            }
+        });
+
+        startedOut = started;
+        completedOut = completed;
+    }
+
     private void ResetUtterance()
     {
         _utterance.Clear();
         _preRoll.Clear();
         _vad.Reset();
+        _bargeUtterance.Clear();
+        _bargeVad.Reset();
     }
 
     private void StartCommandTimer(int seconds)

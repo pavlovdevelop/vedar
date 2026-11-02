@@ -73,6 +73,9 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     private bool _cloudNoticeGiven;
     private readonly HashSet<string> _backupCloudNoticeGiven = new(StringComparer.Ordinal);
     private SpeechPlaybackQueue? _aiQueue;
+    private readonly StringBuilder _echoReference = new();
+    private CancellationTokenSource? _bargeInCts;
+    private int _bargeInBusy;
     private bool _aiNotConfiguredExplained;
     private PendingConfirmation? _pendingConfirmation;
     private MicrophoneStatus _microphoneStatus = MicrophoneStatus.Standby;
@@ -114,6 +117,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         Conversation = new ConversationSession(settingsStore.Current.Ai.MaxHistoryMessages);
 
         _listener.UtteranceCaptured += OnUtteranceCaptured;
+        _listener.BargeInCaptured += OnBargeInCaptured;
         _listener.CommandTimeout += OnCommandTimeout;
         _listener.MicrophoneError += OnMicrophoneError;
         _listener.SpeechStarted += OnSpeechStarted;
@@ -397,6 +401,11 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             token = _turnCts.Token;
             generation = ++_turnGeneration;
             _listener.Suppressed = true;
+            lock (_echoReference)
+            {
+                _echoReference.Clear();
+            }
+
             _currentTurn = Task.Run(() => RunTurnAsync(name, body, token, generation), CancellationToken.None);
         }
 
@@ -461,6 +470,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             _turnActive = false;
         }
 
+        DisableBargeIn();
         if (_lifetime.IsCancellationRequested)
         {
             return;
@@ -1046,10 +1056,12 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             Volatile.Write(ref _aiQueue, queue);
             using var thinking = StartThinkingCue(ct);
 
+            EnableBargeIn(); // "Ведар, спри" also cancels a request that is still being answered
             await foreach (var token in _ai.StreamReplyAsync(messages, ct).ConfigureAwait(false))
             {
                 thinking.Cancel();
                 reply.Append(token);
+                AddEcho(token);
                 foreach (var sentence in chunker.Append(token))
                 {
                     queue.Enqueue(sentence);
@@ -1155,6 +1167,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
         _logger.LogInformation("AI fallback: {From} -> {To} ({Reason}).", e.FailedProvider, e.BackupProvider, e.Reason);
         RaiseNotification(UiNotificationKind.Status, text, true);
+        AddEcho(text);
         Volatile.Read(ref _aiQueue)?.Enqueue(text);
     }
 
@@ -1203,7 +1216,123 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     private void OnSpeakingStarted()
     {
         _listener.Suppressed = true;
+        EnableBargeIn();
         StateMachine.TryTransition(AssistantState.Speaking);
+    }
+
+    // ------------------------------------------------------------------ voice stop ("Ведар, спри" while speaking)
+
+    private void EnableBargeIn()
+    {
+        var s = Settings;
+        if (!s.Activation.VoiceStopWhileSpeaking || s.Microphone.Muted || !_recognizer.IsReady || _listener.BargeInEnabled)
+        {
+            return;
+        }
+
+        lock (_turnGate)
+        {
+            if (!_turnActive || _turnCts is null)
+            {
+                return;
+            }
+
+            _bargeInCts?.Dispose();
+            _bargeInCts = CancellationTokenSource.CreateLinkedTokenSource(_turnCts.Token);
+        }
+
+        _listener.BargeInEnabled = true;
+    }
+
+    private void DisableBargeIn()
+    {
+        _listener.BargeInEnabled = false;
+        lock (_turnGate)
+        {
+            // A check still running must not hold the recognizer when the user speaks the next command.
+            _bargeInCts?.Cancel();
+        }
+    }
+
+    private void AddEcho(string text)
+    {
+        lock (_echoReference)
+        {
+            _echoReference.Append(text).Append(' ');
+        }
+    }
+
+    /// <summary>A short piece of audio heard while VEDAR speaks: stop at once if it is "Ведар, спри" (not our own voice).</summary>
+    private void OnBargeInCaptured(object? sender, UtteranceEventArgs e)
+    {
+        if (_disposed || Interlocked.CompareExchange(ref _bargeInBusy, 1, 0) != 0)
+        {
+            return; // one check at a time; pieces heard meanwhile are skipped
+        }
+
+        CancellationToken token;
+        long generation;
+        lock (_turnGate)
+        {
+            if (!_turnActive || _bargeInCts is null || _bargeInCts.IsCancellationRequested)
+            {
+                Volatile.Write(ref _bargeInBusy, 0);
+                return;
+            }
+
+            token = _bargeInCts.Token;
+            generation = _turnGeneration;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var result = await _recognizer.RecognizeAsync(e.Samples, new RecognitionRequest(RecognitionPurpose.WakeWord, RecognitionPrompts.WakeWord), token).ConfigureAwait(false);
+                LogRecognized("while speaking", result);
+                string reference;
+                lock (_echoReference)
+                {
+                    reference = _echoReference.ToString();
+                }
+
+                var action = StopPhraseDetector.Classify(result.Text, reference, _wakeWord.IsWakeToken, _wakeWord.Match(result.Text).IsMatch);
+                if (action == BargeInAction.None)
+                {
+                    return;
+                }
+
+                lock (_turnGate)
+                {
+                    if (!_turnActive || generation != _turnGeneration)
+                    {
+                        return;
+                    }
+                }
+
+                if (action == BargeInAction.Stop)
+                {
+                    _logger.LogInformation("Stop by voice while speaking.");
+                    Stop();
+                    return;
+                }
+
+                // "Ведар, колко е часът?" while VEDAR speaks: stop speaking and handle the new request (main model).
+                _logger.LogInformation("Interrupted by the wake word while speaking.");
+                InterruptAndRun("wake-while-speaking", ct => HandleWakeUtteranceAsync(e.Samples, ct));
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Voice stop check failed.");
+            }
+            finally
+            {
+                Volatile.Write(ref _bargeInBusy, 0);
+            }
+        }, CancellationToken.None);
     }
 
     /// <summary>Speaks text inside the current turn. Respects cancellation immediately.</summary>
@@ -1224,6 +1353,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             AddTranscript(Speaker.Assistant, text);
         }
 
+        AddEcho(text);
         if (!_synthesizer.IsReady)
         {
             _logger.LogWarning("Speech synthesis unavailable; showing text only.");
@@ -1337,6 +1467,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
         _disposed = true;
         _listener.UtteranceCaptured -= OnUtteranceCaptured;
+        _listener.BargeInCaptured -= OnBargeInCaptured;
         _listener.CommandTimeout -= OnCommandTimeout;
         _listener.MicrophoneError -= OnMicrophoneError;
         _listener.SpeechStarted -= OnSpeechStarted;
