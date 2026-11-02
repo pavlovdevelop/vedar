@@ -166,10 +166,25 @@ public sealed class FakeVoiceListener : IVoiceListener
 
     public event EventHandler<UtteranceEventArgs>? UtteranceCaptured;
     public event EventHandler<UtteranceEventArgs>? BargeInCaptured;
+    public event EventHandler? BargeInSpeechStarted;
     public event EventHandler? SpeechStarted;
     public event EventHandler? CommandTimeout;
     public event EventHandler<AudioDeviceErrorEventArgs>? MicrophoneError;
     public bool BargeInEnabled { get; set; }
+    public bool BargeInContinuation { get; set; }
+
+    /// <summary>Simulates the user going on speaking while VEDAR recognizes the first part. False if not listening for it.</summary>
+    public bool EmitContinuation(float seconds = 1.5f)
+    {
+        if (Mode == ListeningMode.Off || !Suppressed || !BargeInEnabled || !BargeInContinuation)
+        {
+            return false;
+        }
+
+        BargeInSpeechStarted?.Invoke(this, EventArgs.Empty);
+        BargeInCaptured?.Invoke(this, new UtteranceEventArgs(new float[(int)(16000 * seconds)], Mode, true));
+        return true;
+    }
 
     /// <summary>Simulates a short piece of audio heard while VEDAR speaks. Returns false if it would not be reported.</summary>
     public bool EmitBargeIn(float seconds = 1.0f)

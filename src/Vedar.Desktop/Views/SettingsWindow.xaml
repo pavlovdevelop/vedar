@@ -103,6 +103,10 @@
                         <Label Content="{l:Loc settings.hotkey.mic}" Target="{Binding ElementName=MicHotkeyBox}"/>
                         <c:HotkeyBox x:Name="MicHotkeyBox" Hotkey="{Binding MicToggleHotkey}" AutomationProperties.Name="{l:Loc settings.hotkey.mic}"
                                      AutomationProperties.HelpText="{l:Loc settings.hotkey.help}"/>
+                        <Label Content="{l:Loc settings.endPause}" Target="{Binding ElementName=EndPauseSlider}"/>
+                        <Slider x:Name="EndPauseSlider" Minimum="0.6" Maximum="3" TickFrequency="0.1" SmallChange="0.1" LargeChange="0.5" Value="{Binding EndOfSpeechPauseSeconds}"
+                                AutomationProperties.Name="{l:Loc settings.endPause}" AutomationProperties.HelpText="{l:Loc settings.endPause.help}"/>
+                        <TextBlock Text="{l:Loc settings.endPause.help}" Style="{StaticResource Vedar.Muted}" TextWrapping="Wrap"/>
                         <Label Content="{l:Loc settings.followUp}" Target="{Binding ElementName=FollowUpSlider}"/>
                         <Slider x:Name="FollowUpSlider" Minimum="0" Maximum="30" TickFrequency="1" SmallChange="1" LargeChange="5" Value="{Binding FollowUpSeconds}"
                                 AutomationProperties.Name="{l:Loc settings.followUp}"/>

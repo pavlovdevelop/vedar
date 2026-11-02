@@ -70,6 +70,10 @@ public class IntentRecognitionTests
     [InlineData("гласова настройка", "voiceSetup")]
     [InlineData("започни настройката", "voiceSetup")]
     [InlineData("Постави ключа.", "pasteKey")]
+    [InlineData("Чакай повече.", "pauseLonger")]
+    [InlineData("изчаквай по-дълго", "pauseLonger")]
+    [InlineData("не ме прекъсвай", "pauseLonger")]
+    [InlineData("чакай по-малко", "pauseShorter")]
     [InlineData("запиши ключа за BgGPT", "pasteKey")]
     [InlineData("вземи ключа от клипборда", "pasteKey")]
     // conversation

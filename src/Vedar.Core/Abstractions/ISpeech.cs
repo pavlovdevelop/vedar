@@ -70,6 +70,11 @@ public interface IVoiceListener : IDisposable
     /// <see cref="BargeInCaptured"/> — only so that "Ведар, спри" can stop VEDAR while it speaks.
     /// </summary>
     bool BargeInEnabled { get; set; }
+    /// <summary>
+    /// Barge-in pieces are the rest of the user's sentence (VEDAR has not answered yet): they end after the normal
+    /// end-of-speech pause instead of after 4 s, and even very short pieces are reported.
+    /// </summary>
+    bool BargeInContinuation { get; set; }
     /// <summary>Current input level 0..1 (for the microphone meter).</summary>
     float Level { get; }
 
@@ -82,6 +87,8 @@ public interface IVoiceListener : IDisposable
     event EventHandler<UtteranceEventArgs>? UtteranceCaptured;
     /// <summary>A short piece of audio heard while suppressed (see <see cref="BargeInEnabled"/>).</summary>
     event EventHandler<UtteranceEventArgs>? BargeInCaptured;
+    /// <summary>Speech started while suppressed and <see cref="BargeInEnabled"/> (the user is talking).</summary>
+    event EventHandler? BargeInSpeechStarted;
     event EventHandler? SpeechStarted;
     /// <summary>No speech started within the command timeout.</summary>
     event EventHandler? CommandTimeout;

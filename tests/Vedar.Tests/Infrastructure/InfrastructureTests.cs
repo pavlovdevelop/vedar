@@ -327,3 +327,24 @@ public class ScreenReaderPolicyTests
     public void Avoids_double_speech(ScreenReaderNotificationMode mode, UiNotificationKind kind, bool spoken, bool readerActive, bool expected) =>
         Assert.Equal(expected, ScreenReaderNotificationPolicy.ShouldNotify(mode, kind, spoken, readerActive));
 }
+
+public class SettingsMigrationTests
+{
+    [Fact]
+    public void Version_1_listening_times_are_raised_but_values_the_user_chose_are_kept()
+    {
+        var old = new Vedar.Core.Settings.VedarSettings { SchemaVersion = 1 };
+        old.Activation.CommandListenTimeoutSeconds = 7; // the old default
+        old.Activation.FollowUpSeconds = 12;            // chosen by the user
+        old.Normalize();
+        Assert.Equal(10, old.Activation.CommandListenTimeoutSeconds);
+        Assert.Equal(12, old.Activation.FollowUpSeconds);
+        Assert.Equal(1400, old.Activation.EndOfSpeechPauseMs);
+        Assert.Equal(2, old.SchemaVersion);
+
+        var wild = new Vedar.Core.Settings.VedarSettings();
+        wild.Activation.EndOfSpeechPauseMs = 50;
+        Assert.Equal(600, wild.Normalize().Activation.EndOfSpeechPauseMs);
+    }
+}
+

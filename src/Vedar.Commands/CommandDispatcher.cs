@@ -97,6 +97,11 @@ public sealed class CommandDispatcher : ICommandDispatcher
             .Add("volumeDown", "звука|звукът е? силен|висок", 1)
             .Add("voiceLouder", "говори|говориш по силно|високо|ясно", 1)
             .Add("voiceQuieter", "говори|говориш по тихо|ниско", 1)
+            .Add("pauseLonger", "чакай|изчаквай|изчакай|почакай повече|още", 2)
+            .Add("pauseLonger", "чакай|изчаквай|изчакай|почакай по дълго", 2)
+            .Add("pauseLonger", "не ме прекъсвай|прекъсвайте", 1)
+            .Add("pauseLonger", "прекъсваш ме", 1)
+            .Add("pauseShorter", "чакай|изчаквай|изчакай по малко|кратко", 2)
             .Add("voiceFaster", "говори|говориш? по бързо|бързичко", 1)
             .Add("voiceSlower", "говори|говориш? по бавно|бавничко", 1)
             .Add("voiceSetup", "гласова|гласовата|първоначална|първоначалната настройка|настройката", 1)
@@ -217,6 +222,10 @@ public sealed class CommandDispatcher : ICommandDispatcher
                 return ChangeVoiceVolume(+0.15f);
             case "voiceQuieter":
                 return ChangeVoiceVolume(-0.15f);
+            case "pauseLonger":
+                return ChangePause(+400, "speech.pause.longer");
+            case "pauseShorter":
+                return ChangePause(-300, "speech.pause.shorter");
             case "voiceFaster":
                 return ChangeRate(+0.15f, "speech.voice.faster");
             case "voiceSlower":
@@ -408,6 +417,18 @@ public sealed class CommandDispatcher : ICommandDispatcher
         s.Voice.Volume = Math.Clamp(s.Voice.Volume + delta, 0.2f, 1f);
         _settings.Save(s);
         return CommandResult.Done(delta > 0 ? "voiceLouder" : "voiceQuieter", _loc.Format("speech.volume.set", Percent(s.Voice.Volume)));
+    }
+
+    /// <summary>How long VEDAR waits after the user stops speaking before it answers.</summary>
+    private CommandResult ChangePause(int deltaMs, string key)
+    {
+        var s = _settings.Current;
+        var before = s.Activation.EndOfSpeechPauseMs;
+        s.Activation.EndOfSpeechPauseMs = Math.Clamp(before + deltaMs, ActivationSettings.MinEndOfSpeechPauseMs, ActivationSettings.MaxEndOfSpeechPauseMs);
+        _settings.Save(s);
+        var limit = s.Activation.EndOfSpeechPauseMs == before;
+        var seconds = (s.Activation.EndOfSpeechPauseMs / 1000.0).ToString("0.#", BulgarianText.Culture);
+        return CommandResult.Done(key, limit ? _loc.Get("speech.pause.limit") : _loc.Format(key, seconds));
     }
 
     private CommandResult ChangeRate(float delta, string key)

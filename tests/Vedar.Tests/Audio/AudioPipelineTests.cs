@@ -154,7 +154,8 @@ public class VoiceListenerTests
         return (new VoiceListener(input, store, Log.Null<VoiceListener>()), input, store);
     }
 
-    private static float[] Utterance() => Signals.Concat(Signals.Noise(0.6, 0.002f), Signals.Speechlike(1.2), Signals.Noise(1.2, 0.002f));
+    // The trailing silence must be longer than the end-of-speech pause (1.4 s by default).
+    private static float[] Utterance() => Signals.Concat(Signals.Noise(0.6, 0.002f), Signals.Speechlike(1.2), Signals.Noise(2.0, 0.002f));
 
     [Fact]
     public async Task Captures_one_utterance_in_command_mode()
@@ -166,7 +167,40 @@ public class VoiceListenerTests
         await input.FeedAsync(Utterance());
         var u = Assert.Single(captured);
         Assert.Equal(ListeningMode.Command, u.Mode);
-        Assert.InRange(u.Duration.TotalSeconds, 1.2, 2.6);
+        Assert.InRange(u.Duration.TotalSeconds, 1.2, 3.3); // speech + pre-roll + the end-of-speech pause
+    }
+
+    [Theory]
+    [InlineData(1400, 1)] // default: a one-second pause to think does not end the sentence
+    [InlineData(600, 2)]  // the shortest setting splits it
+    public async Task A_pause_to_think_does_not_cut_the_sentence(int pauseMs, int expectedUtterances)
+    {
+        var (listener, input, _) = Create(s => s.Activation.EndOfSpeechPauseMs = pauseMs);
+        var captured = new List<UtteranceEventArgs>();
+        listener.UtteranceCaptured += (_, e) => captured.Add(e);
+        await listener.SetModeAsync(ListeningMode.Command, CancellationToken.None);
+        // "Искам да говорим" … 1 s … "за историята на България"
+        await input.FeedAsync(Signals.Concat(Signals.Noise(0.6, 0.002f), Signals.Speechlike(1.2), Signals.Noise(1.0, 0.002f), Signals.Speechlike(1.5), Signals.Noise(3.5, 0.002f)));
+        Assert.Equal(expectedUtterances, captured.Count);
+    }
+
+    [Fact]
+    public async Task Continuation_pieces_include_the_beginning_and_end_after_the_normal_pause()
+    {
+        var (listener, input, _) = Create();
+        var pieces = new List<UtteranceEventArgs>();
+        var starts = 0;
+        listener.BargeInCaptured += (_, e) => pieces.Add(e);
+        listener.BargeInSpeechStarted += (_, _) => starts++;
+        await listener.SetModeAsync(ListeningMode.Command, CancellationToken.None);
+        listener.Suppressed = true;
+        listener.BargeInContinuation = true;
+        listener.BargeInEnabled = true;
+        // 6 s of continuation with a short pause: one piece (not cut at 4 s, not cut by the 0.4 s pause).
+        await input.FeedAsync(Signals.Concat(Signals.Noise(0.5, 0.002f), Signals.Speechlike(3.0), Signals.Noise(0.4, 0.002f), Signals.Speechlike(3.0), Signals.Noise(2.5, 0.002f)));
+        Assert.Equal(1, starts);
+        var piece = Assert.Single(pieces);
+        Assert.True(piece.Duration.TotalSeconds > 6.0, $"{piece.Duration.TotalSeconds:F2} s");
     }
 
     [Fact]

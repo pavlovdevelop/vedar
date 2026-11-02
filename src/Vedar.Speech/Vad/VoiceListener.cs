@@ -63,6 +63,21 @@ public sealed class VoiceListener : IVoiceListener
 
     public event EventHandler<UtteranceEventArgs>? UtteranceCaptured;
     public event EventHandler<UtteranceEventArgs>? BargeInCaptured;
+    public event EventHandler? BargeInSpeechStarted;
+    private bool _bargeContinuation;
+
+    public bool BargeInContinuation
+    {
+        get { lock (_gate) { return _bargeContinuation; } }
+        set
+        {
+            lock (_gate)
+            {
+                _bargeContinuation = value;
+                _bargeVad.HangoverFrames = value ? PauseFrames() : 12;
+            }
+        }
+    }
 
     public bool BargeInEnabled
     {
@@ -192,8 +207,12 @@ public sealed class VoiceListener : IVoiceListener
     {
         var s = _settings.Current;
         _vad.Sensitivity = s.Microphone.Sensitivity;
-        _vad.HangoverFrames = mode == ListeningMode.WakeWord ? 20 : 27;
+        // The same generous pause for "Ведар, …" and for answers: people stop to think in the middle of a sentence.
+        _vad.HangoverFrames = PauseFrames();
     }
+
+    private int PauseFrames() =>
+        Math.Max(10, _settings.Current.Activation.EndOfSpeechPauseMs / (1000 * EnergyVoiceActivityDetector.FrameSamples / AudioFrameEventArgs.SampleRate));
 
     private int MaxUtteranceSamples()
     {
@@ -207,6 +226,7 @@ public sealed class VoiceListener : IVoiceListener
         float[]? completed = null;
         float[]? bargeIn = null;
         bool started = false;
+        bool bargeStarted = false;
         ListeningMode mode;
         var settings = _settings.Current.Microphone;
         var samples = e.Samples;
@@ -233,7 +253,7 @@ public sealed class VoiceListener : IVoiceListener
             {
                 if (_bargeIn)
                 {
-                    bargeIn = CollectBargeIn(samples);
+                    bargeIn = CollectBargeIn(samples, ref bargeStarted);
                 }
             }
             else
@@ -245,6 +265,11 @@ public sealed class VoiceListener : IVoiceListener
             {
                 StopCommandTimer();
             }
+        }
+
+        if (bargeStarted)
+        {
+            BargeInSpeechStarted?.Invoke(this, EventArgs.Empty);
         }
 
         if (bargeIn is not null)
@@ -276,20 +301,46 @@ public sealed class VoiceListener : IVoiceListener
     }
 
     /// <summary>Barge-in: short pieces of audio heard while VEDAR speaks. Called under the lock.</summary>
-    private float[]? CollectBargeIn(float[] samples)
+    private float[]? CollectBargeIn(float[] samples, ref bool startedOut)
     {
         float[]? piece = null;
+        bool started = false;
+        var max = _bargeContinuation ? MaxUtteranceSamples() : BargeInMaxSamples;
         _bargeVad.Process(samples, (evt, frame) =>
         {
+            if (evt == VadEvent.SpeechStart)
+            {
+                started = true;
+                if (_bargeContinuation)
+                {
+                    // The beginning of the continuation (pre-roll), so that no word is cut.
+                    foreach (var pre in _preRoll)
+                    {
+                        _bargeUtterance.AddRange(pre);
+                    }
+
+                    _preRoll.Clear();
+                }
+            }
+
             if (evt == VadEvent.SpeechStart || _bargeVad.InSpeech || evt == VadEvent.SpeechEnd)
             {
                 _bargeUtterance.AddRange(frame);
             }
-
-            if ((evt == VadEvent.SpeechEnd || _bargeUtterance.Count >= BargeInMaxSamples) && _bargeUtterance.Count > 0)
+            else if (_bargeContinuation)
             {
-                // At least 0.3 s: "спри" is short, clicks are shorter.
-                if (_bargeUtterance.Count >= AudioFrameEventArgs.SampleRate * 3 / 10)
+                _preRoll.Enqueue(frame);
+                while (_preRoll.Count > PreRollFrames)
+                {
+                    _preRoll.Dequeue();
+                }
+            }
+
+            if ((evt == VadEvent.SpeechEnd || _bargeUtterance.Count >= max) && _bargeUtterance.Count > 0)
+            {
+                // At least 0.3 s for a stop word ("спри" is short, clicks are shorter). A continuation is always
+                // reported, so that the orchestrator never waits for a piece that was dropped.
+                if (_bargeContinuation || _bargeUtterance.Count >= AudioFrameEventArgs.SampleRate * 3 / 10)
                 {
                     piece = _bargeUtterance.ToArray();
                 }
@@ -301,6 +352,7 @@ public sealed class VoiceListener : IVoiceListener
                 }
             }
         });
+        startedOut = started;
         return piece;
     }
 

@@ -8,7 +8,8 @@ namespace Vedar.Core.Settings;
 /// </summary>
 public sealed class VedarSettings
 {
-    public const int CurrentSchemaVersion = 1;
+    /// <summary>2: longer listening (pause at the end of speech, follow-up and command windows).</summary>
+    public const int CurrentSchemaVersion = 2;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public GeneralSettings General { get; set; } = new();
@@ -55,8 +56,23 @@ public sealed class VedarSettings
         Activation.PushToTalkHotkey = string.IsNullOrWhiteSpace(Activation.PushToTalkHotkey) ? ActivationSettings.DefaultPushToTalk : Activation.PushToTalkHotkey;
         Activation.StopHotkey = string.IsNullOrWhiteSpace(Activation.StopHotkey) ? ActivationSettings.DefaultStop : Activation.StopHotkey;
         Activation.MicrophoneToggleHotkey = string.IsNullOrWhiteSpace(Activation.MicrophoneToggleHotkey) ? ActivationSettings.DefaultMicToggle : Activation.MicrophoneToggleHotkey;
+        if (SchemaVersion < 2)
+        {
+            // Version 1 cut people off: raise the old defaults (values the user changed are kept).
+            if (Activation.CommandListenTimeoutSeconds == 7)
+            {
+                Activation.CommandListenTimeoutSeconds = ActivationSettings.DefaultCommandListenTimeoutSeconds;
+            }
+
+            if (Activation.FollowUpSeconds == 8)
+            {
+                Activation.FollowUpSeconds = ActivationSettings.DefaultFollowUpSeconds;
+            }
+        }
+
         Activation.FollowUpSeconds = Math.Clamp(Activation.FollowUpSeconds, 0, 30);
         Activation.CommandListenTimeoutSeconds = Math.Clamp(Activation.CommandListenTimeoutSeconds, 3, 20);
+        Activation.EndOfSpeechPauseMs = Math.Clamp(Activation.EndOfSpeechPauseMs, ActivationSettings.MinEndOfSpeechPauseMs, ActivationSettings.MaxEndOfSpeechPauseMs);
         Ai.MaxResponseTokens = Math.Clamp(Ai.MaxResponseTokens, 50, 4000);
         Ai.Temperature = Math.Clamp(Ai.Temperature, 0f, 1.5f);
         Ai.RequestTimeoutSeconds = Math.Clamp(Ai.RequestTimeoutSeconds, 10, 300);
@@ -144,10 +160,22 @@ public sealed class ActivationSettings
     public string PushToTalkHotkey { get; set; } = DefaultPushToTalk;
     public string StopHotkey { get; set; } = DefaultStop;
     public string MicrophoneToggleHotkey { get; set; } = DefaultMicToggle;
+    public const int DefaultFollowUpSeconds = 15;
+    public const int DefaultCommandListenTimeoutSeconds = 10;
+    public const int DefaultEndOfSpeechPauseMs = 1400;
+    public const int MinEndOfSpeechPauseMs = 600;
+    public const int MaxEndOfSpeechPauseMs = 3000;
+
     /// <summary>After VEDAR answers in a conversation, listen this many seconds for a follow-up without the wake word.</summary>
-    public int FollowUpSeconds { get; set; } = 8;
+    public int FollowUpSeconds { get; set; } = DefaultFollowUpSeconds;
     /// <summary>How long to wait for a command after the wake word / push-to-talk before giving up.</summary>
-    public int CommandListenTimeoutSeconds { get; set; } = 7;
+    public int CommandListenTimeoutSeconds { get; set; } = DefaultCommandListenTimeoutSeconds;
+    /// <summary>
+    /// Silence after which VEDAR decides that the user has finished speaking. People pause to think in the middle
+    /// of a sentence ("искам да говорим… за историята на България"), so this is generous; adjustable by voice
+    /// ("Ведар, чакай повече" / "чакай по-малко").
+    /// </summary>
+    public int EndOfSpeechPauseMs { get; set; } = DefaultEndOfSpeechPauseMs;
     /// <summary>While VEDAR speaks or thinks, listen only for "Ведар, спри" / "спри" / "стоп" and stop at once.</summary>
     public bool VoiceStopWhileSpeaking { get; set; } = true;
 }

@@ -81,6 +81,17 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     private readonly Queue<string> _recentSentences = new();
     private CancellationTokenSource? _bargeInCts;
     private int _bargeInBusy;
+    private ContinuationWatch? _continuationWatch;
+
+    /// <summary>After a cut that looks unfinished ("… за"), how long to wait for the user to go on.</summary>
+    private static readonly TimeSpan UnfinishedGrace = TimeSpan.FromSeconds(2.5);
+
+    /// <summary>The user starts speaking again while VEDAR is still working out what was said.</summary>
+    private sealed class ContinuationWatch
+    {
+        public volatile bool Started;
+        public TaskCompletionSource<float[]> Piece { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
     private bool _aiNotConfiguredExplained;
     private PendingConfirmation? _pendingConfirmation;
     private MicrophoneStatus _microphoneStatus = MicrophoneStatus.Standby;
@@ -128,6 +139,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
         _listener.UtteranceCaptured += OnUtteranceCaptured;
         _listener.BargeInCaptured += OnBargeInCaptured;
+        _listener.BargeInSpeechStarted += OnBargeInSpeechStarted;
         _listener.CommandTimeout += OnCommandTimeout;
         _listener.MicrophoneError += OnMicrophoneError;
         _listener.SpeechStarted += OnSpeechStarted;
@@ -311,12 +323,15 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     }
 
     /// <summary>Stops speech, recognition and AI requests immediately. Has priority over everything else.</summary>
-    public void Stop()
+    public void Stop() => Stop(listenNext: false);
+
+    /// <param name="listenNext">After the stop, listen for a request without the wake word ("Ведар, спри" by voice).</param>
+    private void Stop(bool listenNext)
     {
         _logger.LogInformation("Stop requested in state {State}.", State);
         lock (_turnGate)
         {
-            _listenAfterCancel = false;
+            _listenAfterCancel = listenNext && _turnActive && !Settings.Microphone.Muted;
             _nextListeningMode = null;
             _turnCts?.Cancel();
         }
@@ -776,6 +791,20 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
     private async Task HandleWakeUtteranceAsync(float[] samples, CancellationToken ct)
     {
+        // "Ведар, искам да говорим… за историята": a pause may have cut the sentence; keep listening meanwhile.
+        StartContinuationWatch();
+        try
+        {
+            await HandleWakeUtteranceCoreAsync(samples, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            StopContinuationWatch();
+        }
+    }
+
+    private async Task HandleWakeUtteranceCoreAsync(float[] samples, CancellationToken ct)
+    {
         var wakeResult = await _recognizer.RecognizeAsync(samples, new RecognitionRequest(RecognitionPurpose.WakeWord, RecognitionPrompts.WakeWord), ct).ConfigureAwait(false);
         LogRecognized("wake-scan", wakeResult);
         var match = _wakeWord.Match(wakeResult.Text);
@@ -785,8 +814,10 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         }
 
         _logger.LogInformation("Wake word detected ({Token}).", match.MatchedToken);
-        if (!HasMeaningfulCommand(match.Command))
+        var continued = Volatile.Read(ref _continuationWatch)?.Started == true;
+        if (!HasMeaningfulCommand(match.Command) && !continued)
         {
+            StopContinuationWatch();
             _currentListenIsFollowUp = false;
             if (Settings.Accessibility.SpeakStatusChanges)
             {
@@ -799,7 +830,9 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
         // The wake model is small and fast; re-run the main model on the full utterance for accuracy.
         StateMachine.TryTransition(AssistantState.Recognizing, "wake-word");
-        var full = await _recognizer.RecognizeAsync(samples, new RecognitionRequest(RecognitionPurpose.Command, CommandPrompt), ct).ConfigureAwait(false);
+        Task<RecognitionResult> Recognize(float[] audio) => _recognizer.RecognizeAsync(audio, new RecognitionRequest(RecognitionPurpose.Command, CommandPrompt), ct);
+        var full = await Recognize(samples).ConfigureAwait(false);
+        (samples, full) = await CompleteUtteranceAsync(samples, full, Recognize, ct).ConfigureAwait(false);
         LogRecognized("command", full);
         var command = match.Command;
         if (!full.IsEmpty)
@@ -826,7 +859,10 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             await PlayEarconAsync(Earcon.ListenEnd, ct).ConfigureAwait(false);
         }
 
-        var result = await _recognizer.RecognizeAsync(samples, new RecognitionRequest(RecognitionPurpose.Command, CommandPrompt), ct).ConfigureAwait(false);
+        StartContinuationWatch();
+        Task<RecognitionResult> Recognize(float[] audio) => _recognizer.RecognizeAsync(audio, new RecognitionRequest(RecognitionPurpose.Command, CommandPrompt), ct);
+        var result = await Recognize(samples).ConfigureAwait(false);
+        (samples, result) = await CompleteUtteranceAsync(samples, result, Recognize, ct).ConfigureAwait(false);
         LogRecognized("command", result);
         if (result.IsEmpty && Volatile.Read(ref _setup) is { } quietSetup)
         {
@@ -1332,12 +1368,100 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         StateMachine.TryTransition(AssistantState.Speaking);
     }
 
+    // ------------------------------------------------------------------ "still talking": the rest of a sentence
+
+    /// <summary>While the first part is recognized, keep listening: a pause may have cut the sentence.</summary>
+    private void StartContinuationWatch()
+    {
+        if (Settings.Microphone.Muted || !_recognizer.IsReady)
+        {
+            return;
+        }
+
+        Volatile.Write(ref _continuationWatch, new ContinuationWatch());
+        _listener.BargeInContinuation = true;
+        _listener.BargeInEnabled = true;
+    }
+
+    private void StopContinuationWatch()
+    {
+        if (Interlocked.Exchange(ref _continuationWatch, null) is not null)
+        {
+            _listener.BargeInEnabled = false;
+            _listener.BargeInContinuation = false;
+        }
+    }
+
+    /// <summary>
+    /// If the user went on speaking after the pause (or the first part ends like "… за"), waits for the rest and
+    /// recognizes the whole sentence at once — instead of answering half of it.
+    /// </summary>
+    private async Task<(float[] Samples, RecognitionResult Result)> CompleteUtteranceAsync(
+        float[] samples, RecognitionResult result, Func<float[], Task<RecognitionResult>> recognize, CancellationToken ct)
+    {
+        try
+        {
+            for (int part = 0; part < 4; part++)
+            {
+                var watch = Volatile.Read(ref _continuationWatch);
+                if (watch is null)
+                {
+                    break;
+                }
+
+                if (!watch.Started && UtteranceCompleteness.LooksUnfinished(result.Text))
+                {
+                    var deadline = DateTime.UtcNow + UnfinishedGrace;
+                    while (!watch.Started && DateTime.UtcNow < deadline)
+                    {
+                        await Task.Delay(50, ct).ConfigureAwait(false);
+                    }
+                }
+
+                if (!watch.Started)
+                {
+                    break;
+                }
+
+                float[] piece;
+                try
+                {
+                    piece = await watch.Piece.Task.WaitAsync(TimeSpan.FromSeconds(Settings.Recognition.MaxConversationSeconds + 5), ct).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    break;
+                }
+
+                // Keep watching: the user may pause once more.
+                Volatile.Write(ref _continuationWatch, new ContinuationWatch());
+                if (piece.Length < AudioFrameEventArgs.SampleRate * 3 / 10)
+                {
+                    continue; // a click or a breath
+                }
+
+                var combined = new float[samples.Length + AudioFrameEventArgs.SampleRate / 4 + piece.Length];
+                samples.CopyTo(combined, 0);
+                piece.CopyTo(combined, samples.Length + AudioFrameEventArgs.SampleRate / 4);
+                samples = combined;
+                result = await recognize(samples).ConfigureAwait(false);
+                _logger.LogInformation("The user went on speaking; recognized the whole sentence ({Seconds:F1} s).", samples.Length / (double)AudioFrameEventArgs.SampleRate);
+            }
+        }
+        finally
+        {
+            StopContinuationWatch();
+        }
+
+        return (samples, result);
+    }
+
     // ------------------------------------------------------------------ voice stop ("Ведар, спри" while speaking)
 
     private void EnableBargeIn()
     {
         var s = Settings;
-        if (!s.Activation.VoiceStopWhileSpeaking || s.Microphone.Muted || !_recognizer.IsReady || _listener.BargeInEnabled)
+        if (!s.Activation.VoiceStopWhileSpeaking || s.Microphone.Muted || !_recognizer.IsReady || (_listener.BargeInEnabled && !_listener.BargeInContinuation))
         {
             return;
         }
@@ -1353,12 +1477,16 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             _bargeInCts = CancellationTokenSource.CreateLinkedTokenSource(_turnCts.Token);
         }
 
+        Volatile.Write(ref _continuationWatch, null);
+        _listener.BargeInContinuation = false;
         _listener.BargeInEnabled = true;
     }
 
     private void DisableBargeIn()
     {
+        Volatile.Write(ref _continuationWatch, null);
         _listener.BargeInEnabled = false;
+        _listener.BargeInContinuation = false;
         lock (_turnGate)
         {
             // A check still running must not hold the recognizer when the user speaks the next command.
@@ -1386,8 +1514,24 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     }
 
     /// <summary>A short piece of audio heard while VEDAR speaks: stop at once if it is "Ведар, спри" (not our own voice).</summary>
+    private void OnBargeInSpeechStarted(object? sender, EventArgs e)
+    {
+        if (Volatile.Read(ref _continuationWatch) is { } watch)
+        {
+            watch.Started = true;
+        }
+    }
+
     private void OnBargeInCaptured(object? sender, UtteranceEventArgs e)
     {
+        if (Volatile.Read(ref _continuationWatch) is { } watch)
+        {
+            // The rest of the user's sentence, heard while VEDAR was still recognizing the first part.
+            watch.Started = true;
+            watch.Piece.TrySetResult(e.Samples);
+            return;
+        }
+
         if (_disposed || Interlocked.CompareExchange(ref _bargeInBusy, 1, 0) != 0)
         {
             return; // one check at a time; pieces heard meanwhile are skipped
@@ -1435,8 +1579,9 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
                 if (action == BargeInAction.Stop)
                 {
+                    // Stop, then listen for the next request without the wake word: the user is talking to VEDAR.
                     _logger.LogInformation("Stop by voice while speaking.");
-                    Stop();
+                    Stop(listenNext: true);
                     return;
                 }
 
@@ -1590,6 +1735,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         _disposed = true;
         _listener.UtteranceCaptured -= OnUtteranceCaptured;
         _listener.BargeInCaptured -= OnBargeInCaptured;
+        _listener.BargeInSpeechStarted -= OnBargeInSpeechStarted;
         _listener.CommandTimeout -= OnCommandTimeout;
         _listener.MicrophoneError -= OnMicrophoneError;
         _listener.SpeechStarted -= OnSpeechStarted;

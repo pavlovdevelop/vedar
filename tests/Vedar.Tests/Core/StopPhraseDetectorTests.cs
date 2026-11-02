@@ -74,3 +74,17 @@ public class StopPhraseDetectorTests
         Assert.False(StopPhraseDetector.IsStopRequest("Спри.", help, Wake.IsWakeToken)); // could be our own voice
     }
 }
+
+public class UtteranceCompletenessTests
+{
+    [Theory]
+    [InlineData("Искам да говорим за", true)]
+    [InlineData("Разкажи ми нещо и", true)]
+    [InlineData("Ами…", true)]
+    [InlineData("Кога е основан", false)]
+    [InlineData("Искам да говорим за историята на България.", false)]
+    [InlineData("Колко е часът?", false)]
+    [InlineData("", false)]
+    public void Recognises_cut_off_sentences(string text, bool unfinished) =>
+        Assert.Equal(unfinished, Vedar.Core.Text.UtteranceCompleteness.LooksUnfinished(text));
+}

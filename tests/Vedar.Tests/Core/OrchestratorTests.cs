@@ -194,10 +194,75 @@ public class OrchestratorTests
         Assert.True(sw.ElapsedMilliseconds < 1000, $"voice stop took {sw.ElapsedMilliseconds} ms");
         Assert.True(h.Output.CancelledCount >= 1);
         Assert.Contains(h.Recognizer.Requests, r => r.Purpose == RecognitionPurpose.WakeWord); // the fast model
-        await h.IdleAsync();
-        Assert.Equal(AssistantState.Idle, h.Orchestrator.State);
+        // After "Ведар, спри" VEDAR listens for the next request without the wake word.
+        await Wait.UntilAsync(() => h.Orchestrator.State == AssistantState.Listening && h.Listener.Mode == ListeningMode.Command && !h.Listener.Suppressed, 3000);
         Assert.False(h.Listener.BargeInEnabled);
-        Assert.False(h.Listener.Suppressed);
+
+        h.Recognizer.Responder = (_, r) => r.Purpose == RecognitionPurpose.Command ? "Искам да ми разкажеш нещо за световната история." : string.Empty;
+        h.Ai.Reply("Световната история започва ", "с първите цивилизации.");
+        Assert.True(h.Listener.Emit());
+        await h.IdleAsync();
+        Assert.Contains(h.Ai.Requests, r => r.Any(m => m.Content.Contains("световната история")));
+        Assert.Contains("първите цивилизации", h.Spoken);
+    }
+
+    [Fact]
+    public async Task Pause_in_the_middle_of_a_sentence_does_not_cut_it_the_whole_sentence_is_understood()
+    {
+        await using var h = new OrchestratorHarness();
+        await h.StartAsync();
+        h.Recognizer.Delay = TimeSpan.FromMilliseconds(300); // recognizing the first part takes a moment
+        h.Recognizer.Responder = (samples, r) => samples.Length > 16000 * 2
+            ? "Искам да говорим за историята на България."
+            : "Искам да говорим.";
+        h.Ai.Reply("Историята на България ", "започва през шестстотин осемдесет и първа година.");
+
+        h.Orchestrator.PushToTalk();
+        await Wait.UntilAsync(() => h.Listener.Mode == ListeningMode.Command && !h.Listener.Suppressed);
+        Assert.True(h.Listener.Emit(1.0f));          // "Искам да говорим" … pause …
+        await Wait.UntilAsync(() => h.Listener.BargeInContinuation && h.Listener.BargeInEnabled, 2000);
+        Assert.True(h.Listener.EmitContinuation(1.5f)); // … "за историята на България"
+        await h.IdleAsync();
+
+        Assert.DoesNotContain("Какво искаш да обсъдим", h.Spoken); // it did not answer half a sentence
+        var asked = Assert.Single(h.Ai.Requests);
+        Assert.Contains(asked, m => m.Content.Contains("историята на България"));
+        Assert.Contains("шестстотин осемдесет и първа", h.Spoken);
+        Assert.False(h.Listener.BargeInContinuation);
+    }
+
+    [Fact]
+    public async Task Sentence_ending_like_unfinished_waits_for_the_rest()
+    {
+        await using var h = new OrchestratorHarness();
+        await h.StartAsync();
+        h.Recognizer.Responder = (samples, r) => samples.Length > 16000 * 2 ? "Разкажи ми за Васил Левски." : "Разкажи ми за";
+        h.Ai.Reply("Васил Левски е ", "Апостола на свободата.");
+
+        h.Orchestrator.PushToTalk();
+        await Wait.UntilAsync(() => h.Listener.Mode == ListeningMode.Command && !h.Listener.Suppressed);
+        Assert.True(h.Listener.Emit(1.0f));
+        await Wait.UntilAsync(() => h.Listener.BargeInContinuation, 2000);
+        await Task.Delay(1000); // the user thinks for a second, then goes on
+        Assert.True(h.Listener.EmitContinuation(1.5f));
+        await h.IdleAsync();
+
+        var asked = Assert.Single(h.Ai.Requests);
+        Assert.Contains(asked, m => m.Content.Contains("Васил Левски"));
+    }
+
+    [Fact]
+    public async Task Complete_sentence_without_more_speech_is_answered_without_waiting()
+    {
+        await using var h = new OrchestratorHarness();
+        await h.StartAsync();
+        h.Recognizer.Responder = (_, r) => r.Purpose == RecognitionPurpose.Command ? "Колко е часът?" : string.Empty;
+        h.Orchestrator.PushToTalk();
+        await Wait.UntilAsync(() => h.Listener.Mode == ListeningMode.Command && !h.Listener.Suppressed);
+        var sw = Stopwatch.StartNew();
+        Assert.True(h.Listener.Emit());
+        await Wait.UntilAsync(() => h.Spoken.Contains("четиринадесет"), 3000);
+        Assert.True(sw.ElapsedMilliseconds < 1500, $"answered after {sw.ElapsedMilliseconds} ms");
     }
 
     [Fact]

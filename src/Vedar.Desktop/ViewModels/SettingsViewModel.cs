@@ -73,6 +73,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _stopHotkey = s.Activation.StopHotkey;
         _micToggleHotkey = s.Activation.MicrophoneToggleHotkey;
         _followUpSeconds = s.Activation.FollowUpSeconds;
+        _endOfSpeechPauseSeconds = s.Activation.EndOfSpeechPauseMs / 1000.0;
 
         AiProviders = Enum.GetValues<AiProviderKind>().Select(k => new Option<AiProviderKind>(k, _loc["settings.ai.provider." + k])).ToList();
         _selectedAiProvider = AiProviders.First(p => p.Value == s.Ai.Provider);
@@ -140,6 +141,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _stopHotkey;
     [ObservableProperty] private string _micToggleHotkey;
     [ObservableProperty] private int _followUpSeconds;
+    [ObservableProperty] private double _endOfSpeechPauseSeconds;
     [ObservableProperty] private Option<AiProviderKind> _selectedAiProvider;
     [ObservableProperty] private string _bgGptEndpoint;
     [ObservableProperty] private string _bgGptModel;
@@ -299,6 +301,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         s.Activation.StopHotkey = StopHotkey;
         s.Activation.MicrophoneToggleHotkey = MicToggleHotkey;
         s.Activation.FollowUpSeconds = FollowUpSeconds;
+        s.Activation.EndOfSpeechPauseMs = (int)Math.Round(EndOfSpeechPauseSeconds * 1000);
         s.Ai.Provider = SelectedAiProvider.Value;
         s.Ai.BgGptEndpoint = BgGptEndpoint;
         s.Ai.BgGptModel = BgGptModel;
