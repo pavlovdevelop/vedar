@@ -91,14 +91,18 @@ public class UiAutomationEndToEndTests
             window.Focus();
             settings!.Focus();
             Keyboard.Type(VirtualKeyShort.SPACE);
-            var settingsWindow = Retry.WhileNull(() => app.GetAllTopLevelWindows(automation).FirstOrDefault(w => w.Name.Contains("Настройки")), TimeSpan.FromSeconds(10)).Result;
+            // The settings window is owned by the main window, so UI Automation lists it under the main window.
+            AutomationElement? FindSettingsWindow() =>
+                app.GetAllTopLevelWindows(automation).FirstOrDefault(w => w.Name.Contains("Настройки"))
+                ?? window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window)).FirstOrDefault(w => w.Name.Contains("Настройки"));
+            var settingsWindow = Retry.WhileNull(FindSettingsWindow, TimeSpan.FromSeconds(10)).Result;
             var openedWith = "keyboard (Space)";
             if (settingsWindow is null)
             {
                 // The CI desktop may refuse to give the window the foreground; fall back to the UIA Invoke pattern.
                 openedWith = "UI Automation Invoke";
                 settings!.AsButton().Invoke();
-                settingsWindow = Retry.WhileNull(() => app.GetAllTopLevelWindows(automation).FirstOrDefault(w => w.Name.Contains("Настройки")), TimeSpan.FromSeconds(10)).Result;
+                settingsWindow = Retry.WhileNull(FindSettingsWindow, TimeSpan.FromSeconds(10)).Result;
             }
 
             TestContext.Current.TestOutputHelper?.WriteLine($"Settings window opened with: {openedWith}");
