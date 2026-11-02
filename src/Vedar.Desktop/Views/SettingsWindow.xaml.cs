@@ -1,5 +1,4 @@
 using System.Windows;
-using Vedar.Accessibility;
 using Vedar.Core.Localization;
 using Vedar.Desktop.ViewModels;
 
@@ -10,7 +9,6 @@ public partial class SettingsWindow : Window
     public SettingsWindow()
     {
         InitializeComponent();
-        AccessKeyAnnotator.Attach(this);
     }
 
     public SettingsWindow(SettingsViewModel viewModel) : this()

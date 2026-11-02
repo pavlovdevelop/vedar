@@ -1,6 +1,5 @@
 using System.Windows;
 using System.Windows.Threading;
-using Vedar.Accessibility;
 using Vedar.Desktop.ViewModels;
 
 namespace Vedar.Desktop.Views;
@@ -10,7 +9,6 @@ public partial class FirstRunWizard : Window
     public FirstRunWizard()
     {
         InitializeComponent();
-        AccessKeyAnnotator.Attach(this);
     }
 
     public FirstRunWizard(WizardViewModel viewModel) : this()

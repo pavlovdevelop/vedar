@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
-using Vedar.Accessibility;
 using Vedar.Desktop.ViewModels;
 
 namespace Vedar.Desktop.Views;
@@ -11,7 +10,6 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        AccessKeyAnnotator.Attach(this);
     }
 
     public MainWindow(MainViewModel viewModel) : this()
