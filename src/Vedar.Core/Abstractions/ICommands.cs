@@ -23,6 +23,10 @@ public enum AssistantDirective
     MuteMicrophone,
     /// <summary>Speak the text, then listen again for an immediate follow-up.</summary>
     ListenAgain,
+    /// <summary>Start the spoken setup ("Ведар, настройка").</summary>
+    StartVoiceSetup,
+    /// <summary>Take an API key from the clipboard, store it protected and check it ("Ведар, постави ключа").</summary>
+    PasteApiKey,
 }
 
 public sealed record CommandResult(

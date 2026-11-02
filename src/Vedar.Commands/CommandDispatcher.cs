@@ -99,6 +99,12 @@ public sealed class CommandDispatcher : ICommandDispatcher
             .Add("voiceQuieter", "говори|говориш по тихо|ниско", 1)
             .Add("voiceFaster", "говори|говориш? по бързо|бързичко", 1)
             .Add("voiceSlower", "говори|говориш? по бавно|бавничко", 1)
+            .Add("voiceSetup", "гласова|гласовата|първоначална|първоначалната настройка|настройката", 1)
+            .Add("voiceSetup", "започни|пусни|направи настройката|настройка", 1)
+            .Add("voiceSetup", "настрой ме|се", 1)
+            .Add("voiceSetup", "настройка", 0)
+            .Add("pasteKey", "постави|запиши|сложи|въведи|добави ключа|ключ", 3)
+            .Add("pasteKey", "вземи ключа|ключ от? клипборда|клипборд", 1)
             .Add("openSettings", "отвори|покажи настройките|настройки", 1)
             .Add("openSettings", "настройки|настройките", 0)
             .Add("openMainWindow", "покажи|отвори прозореца|прозорец|главния", 2)
@@ -215,6 +221,10 @@ public sealed class CommandDispatcher : ICommandDispatcher
                 return ChangeRate(+0.15f, "speech.voice.faster");
             case "voiceSlower":
                 return ChangeRate(-0.15f, "speech.voice.slower");
+            case "voiceSetup":
+                return CommandResult.Done(id, null, AssistantDirective.StartVoiceSetup);
+            case "pasteKey":
+                return CommandResult.Done(id, null, AssistantDirective.PasteApiKey);
             case "openSettings":
                 _ui.ShowSettings();
                 return CommandResult.Done(id, _loc.Get("speech.openSettings"));

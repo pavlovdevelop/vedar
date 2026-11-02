@@ -116,9 +116,18 @@ public partial class App : Application
             await orchestrator.StartAsync();
             _mainViewModel.UpdateState(orchestrator.State);
 
-            if (!_services.Settings.Current.General.FirstRunCompleted && !StartedInBackground)
+            if (!_services.Settings.Current.General.FirstRunCompleted)
             {
-                ShowWizard();
+                // A blind user sets VEDAR up by talking to it. Without a microphone (or speech models) the
+                // keyboard wizard is shown instead.
+                if (orchestrator.CanRunVoiceSetup)
+                {
+                    _ = orchestrator.StartVoiceSetupAsync();
+                }
+                else if (!StartedInBackground)
+                {
+                    ShowWizard();
+                }
             }
         }
         catch (Exception ex)

@@ -26,6 +26,8 @@ public sealed class OrchestratorHarness : IAsyncDisposable
     public FakeUiHost Ui { get; } = new();
     public FakeSystemActions System { get; } = new();
     public FakeHistoryStore History { get; } = new();
+    public Vedar.Infrastructure.Security.InMemorySecretStore Secrets { get; } = new();
+    public FakeAutoStart AutoStart { get; } = new();
     public AssistantOrchestrator Orchestrator { get; }
     public List<TranscriptEntry> Transcript { get; } = [];
 
@@ -33,6 +35,7 @@ public sealed class OrchestratorHarness : IAsyncDisposable
     {
         var settings = new VedarSettings();
         settings.General.GreetOnStartup = false;
+        settings.General.FirstRunCompleted = true; // an already set-up VEDAR (the first run is tested in VoiceSetupTests)
         settings.Voice.Earcons = false;
         configure?.Invoke(settings);
         Settings = new TestSettingsStore(settings);
@@ -40,7 +43,8 @@ public sealed class OrchestratorHarness : IAsyncDisposable
         var clock = new FixedClock(new DateTimeOffset(2026, 11, 1, 14, 35, 0, TimeSpan.FromHours(2)));
         var wake = new WakeWordMatcher();
         var dispatcher = new CommandDispatcher(Settings, System, Ui, Ai, History, loc, Log.Null<CommandDispatcher>(), clock, wake.IsWakeToken);
-        Orchestrator = new AssistantOrchestrator(Log.Null<AssistantOrchestrator>(), Settings, Listener, Recognizer, wake, Synth, Output, dispatcher, Ai, loc, clock, History);
+        Orchestrator = new AssistantOrchestrator(Log.Null<AssistantOrchestrator>(), Settings, Listener, Recognizer, wake, Synth, Output, dispatcher, Ai, loc, clock, History,
+            ui: Ui, secrets: Secrets, autoStart: AutoStart);
         Orchestrator.TranscriptAdded += (_, e) => { lock (Transcript) { Transcript.Add(e); } };
     }
 

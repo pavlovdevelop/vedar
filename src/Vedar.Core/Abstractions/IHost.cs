@@ -11,6 +11,8 @@ public interface IUserInterfaceHost
     /// <summary>Shows an accessible file picker. Returns null when cancelled.</summary>
     Task<string?> PickTextFileAsync(CancellationToken cancellationToken);
     Task<string?> GetClipboardTextAsync();
+    /// <summary>Empties the clipboard (after an API key was taken from it).</summary>
+    Task ClearClipboardAsync();
     void RequestExit();
     /// <summary>Sends text to the screen reader according to the notification policy.</summary>
     void Notify(UiNotificationKind kind, string text);

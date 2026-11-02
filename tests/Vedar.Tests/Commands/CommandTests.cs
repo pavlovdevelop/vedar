@@ -66,6 +66,12 @@ public class IntentRecognitionTests
     [InlineData("говори по-бързо", "voiceFaster")]
     [InlineData("Отвори настройките.", "openSettings")]
     [InlineData("Отвори на стръките.", "openSettings")]
+    [InlineData("Настройка.", "voiceSetup")]
+    [InlineData("гласова настройка", "voiceSetup")]
+    [InlineData("започни настройката", "voiceSetup")]
+    [InlineData("Постави ключа.", "pasteKey")]
+    [InlineData("запиши ключа за BgGPT", "pasteKey")]
+    [InlineData("вземи ключа от клипборда", "pasteKey")]
     // conversation
     [InlineData("Искам да поговорим.", "startConversation")]
     [InlineData("да си поговорим", "startConversation")]

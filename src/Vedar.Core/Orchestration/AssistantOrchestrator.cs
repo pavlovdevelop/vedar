@@ -4,6 +4,7 @@ using Vedar.Core.Abstractions;
 using Vedar.Core.Conversation;
 using Vedar.Core.Localization;
 using Vedar.Core.Settings;
+using Vedar.Core.Setup;
 using Vedar.Core.State;
 using Vedar.Core.Text;
 
@@ -58,6 +59,9 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     private readonly Localizer _loc;
     private readonly IClock _clock;
     private readonly IConversationHistoryStore? _history;
+    private readonly IAutoStartManager? _autoStart;
+    private readonly ApiKeyPaste? _keys;
+    private VoiceSetupDialog? _setup;
 
     private readonly object _turnGate = new();
     private readonly CancellationTokenSource _lifetime = new();
@@ -74,6 +78,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     private readonly HashSet<string> _backupCloudNoticeGiven = new(StringComparer.Ordinal);
     private SpeechPlaybackQueue? _aiQueue;
     private readonly StringBuilder _echoReference = new();
+    private readonly Queue<string> _recentSentences = new();
     private CancellationTokenSource? _bargeInCts;
     private int _bargeInBusy;
     private bool _aiNotConfiguredExplained;
@@ -100,7 +105,10 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         IConversationAi ai,
         Localizer localizer,
         IClock? clock = null,
-        IConversationHistoryStore? history = null)
+        IConversationHistoryStore? history = null,
+        IUserInterfaceHost? ui = null,
+        ISecretStore? secrets = null,
+        IAutoStartManager? autoStart = null)
     {
         _logger = logger;
         _settingsStore = settingsStore;
@@ -114,6 +122,8 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         _loc = localizer;
         _clock = clock ?? SystemClock.Instance;
         _history = history;
+        _autoStart = autoStart;
+        _keys = ui is not null && secrets is not null ? new ApiKeyPaste(ui, secrets, ai, localizer) : null;
         Conversation = new ConversationSession(settingsStore.Current.Ai.MaxHistoryMessages);
 
         _listener.UtteranceCaptured += OnUtteranceCaptured;
@@ -136,6 +146,14 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     public Task CurrentTurn { get { lock (_turnGate) { return _currentTurn; } } }
     public IReadOnlyList<string> StartupProblems { get; private set; } = [];
 
+    /// <summary>The spoken first-run setup is in progress.</summary>
+    public bool InVoiceSetup => Volatile.Read(ref _setup) is not null;
+
+    /// <summary>The spoken setup can run: speech recognition, the voice and a microphone are available.</summary>
+    public bool CanRunVoiceSetup =>
+        _recognizer.IsReady && _synthesizer.IsReady && !Settings.Microphone.Muted
+        && MicrophoneStatus is not (MicrophoneStatus.NotFound or MicrophoneStatus.Error);
+
     public MicrophoneStatus MicrophoneStatus
     {
         get => _microphoneStatus;
@@ -157,6 +175,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     public event EventHandler? ConfirmationChanged;
     public event EventHandler<bool>? ConversationChanged;
     public event EventHandler<AssistantNotificationEventArgs>? Notification;
+    public event EventHandler<bool>? VoiceSetupChanged;
 
     // ------------------------------------------------------------------ startup
 
@@ -188,7 +207,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         _logger.LogInformation("VEDAR started. STT ready: {Stt}, TTS ready: {Tts}, mic: {Mic}", _recognizer.IsReady, _synthesizer.IsReady, MicrophoneStatus);
 
         var greeting = new StringBuilder();
-        if (Settings.General.GreetOnStartup)
+        if (Settings.General.GreetOnStartup && Settings.General.FirstRunCompleted)
         {
             greeting.Append(string.IsNullOrWhiteSpace(Settings.General.UserName)
                 ? _loc.Pick("speech.greeting.anonymous")
@@ -308,6 +327,8 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             ConfirmationChanged?.Invoke(this, EventArgs.Empty);
         }
 
+        EndVoiceSetup();
+
         if (!IsTurnActive)
         {
             _ = ReturnToDefaultListeningAsync(playCancel: _listener.Mode == ListeningMode.Command);
@@ -339,6 +360,12 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         EndConversationCore();
         await SpeakAsync(wasActive ? _loc.Pick("speech.conversation.end") : _loc.Get("speech.conversation.notActive"), ct, remember: false).ConfigureAwait(false);
     });
+
+    /// <summary>Starts the spoken setup (also by voice: "Ведар, настройка").</summary>
+    public Task StartVoiceSetupAsync() => InterruptAndRunAsync("voice-setup", StartVoiceSetupCoreAsync);
+
+    /// <summary>Takes an API key from the clipboard, stores and checks it (also by voice: "Ведар, постави ключа").</summary>
+    public Task PasteApiKeyAsync() => InterruptAndRunAsync("paste-key", PasteApiKeyCoreAsync);
 
     /// <summary>Clears the conversation context without speaking.</summary>
     public void NewConversation()
@@ -404,6 +431,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             lock (_echoReference)
             {
                 _echoReference.Clear();
+                _recentSentences.Clear();
             }
 
             _currentTurn = Task.Run(() => RunTurnAsync(name, body, token, generation), CancellationToken.None);
@@ -692,6 +720,12 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             return;
         }
 
+        if (Volatile.Read(ref _setup) is { } setup)
+        {
+            TryRunTurn("setup-silence", ct => ApplySetupReplyAsync(setup.OnSilence(), ct));
+            return;
+        }
+
         var followUp = _currentListenIsFollowUp;
         _currentListenIsFollowUp = false;
         _logger.LogInformation("No speech within the command window (follow-up: {FollowUp}).", followUp);
@@ -794,6 +828,12 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
         var result = await _recognizer.RecognizeAsync(samples, new RecognitionRequest(RecognitionPurpose.Command, CommandPrompt), ct).ConfigureAwait(false);
         LogRecognized("command", result);
+        if (result.IsEmpty && Volatile.Read(ref _setup) is { } quietSetup)
+        {
+            await ApplySetupReplyAsync(quietSetup.OnSilence(), ct).ConfigureAwait(false);
+            return;
+        }
+
         if (result.IsEmpty)
         {
             if (followUp && _pendingConfirmation is null)
@@ -824,7 +864,9 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     }
 
     /// <summary>The command vocabulary prompt improves short commands; in a free conversation only the wake word is primed.</summary>
-    private string CommandPrompt => InConversation ? RecognitionPrompts.WakeWord : RecognitionPrompts.Commands;
+    private string? CommandPrompt => Volatile.Read(ref _setup) is { } setup
+        ? setup.RecognitionPrompt
+        : InConversation ? RecognitionPrompts.WakeWord : RecognitionPrompts.Commands;
 
     private static bool HasMeaningfulCommand(string? text) => BulgarianText.NormalizeForMatching(text).Count(char.IsLetterOrDigit) >= 2;
 
@@ -833,6 +875,14 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         if (!fromUi || _pendingConfirmation is null)
         {
             AddTranscript(Speaker.User, text);
+        }
+
+        if (Volatile.Read(ref _setup) is { } setup)
+        {
+            StateMachine.TryTransition(AssistantState.Processing, "setup");
+            var reply = await setup.HandleAsync(text, ct).ConfigureAwait(false);
+            await ApplySetupReplyAsync(reply, ct).ConfigureAwait(false);
+            return;
         }
 
         if (_pendingConfirmation is { } pending)
@@ -922,6 +972,12 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
                 _settingsStore.Save(s);
                 _nextListeningMode = ListeningMode.Off;
                 return;
+            case AssistantDirective.StartVoiceSetup:
+                await StartVoiceSetupCoreAsync(ct).ConfigureAwait(false);
+                return;
+            case AssistantDirective.PasteApiKey:
+                await PasteApiKeyCoreAsync(ct).ConfigureAwait(false);
+                return;
             case AssistantDirective.ListenAgain:
                 if (!string.IsNullOrWhiteSpace(result.SpokenText))
                 {
@@ -948,6 +1004,64 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
                 return;
         }
+    }
+
+    // ------------------------------------------------------------------ spoken setup
+
+    private async Task StartVoiceSetupCoreAsync(CancellationToken ct)
+    {
+        if (!CanRunVoiceSetup)
+        {
+            await SpeakAsync(_loc.Get(_recognizer.IsReady ? "speech.micNotFound" : "speech.speechModelMissing"), ct, remember: false).ConfigureAwait(false);
+            return;
+        }
+
+        EndConversationCore();
+        var setup = new VoiceSetupDialog(_settingsStore, _loc, _keys, _autoStart,
+            HotkeyText(Settings.Activation.PushToTalkHotkey), HotkeyText(Settings.Activation.StopHotkey));
+        Volatile.Write(ref _setup, setup);
+        VoiceSetupChanged?.Invoke(this, true);
+        _logger.LogInformation("Spoken setup started.");
+        await ApplySetupReplyAsync(setup.Start(), ct).ConfigureAwait(false);
+    }
+
+    private async Task ApplySetupReplyAsync(SetupReply reply, CancellationToken ct)
+    {
+        if (reply.Finished)
+        {
+            EndVoiceSetup();
+        }
+
+        await SpeakAsync(reply.Text, ct).ConfigureAwait(false);
+        if (!reply.Finished)
+        {
+            _nextListeningMode = ListeningMode.Command; // answer without the wake word, after the signal
+        }
+    }
+
+    private void EndVoiceSetup()
+    {
+        if (Interlocked.Exchange(ref _setup, null) is not null)
+        {
+            _logger.LogInformation("Spoken setup ended.");
+            VoiceSetupChanged?.Invoke(this, false);
+            _ = RefreshAiStatusAsync(CancellationToken.None);
+        }
+    }
+
+    private async Task PasteApiKeyCoreAsync(CancellationToken ct)
+    {
+        if (_keys is null)
+        {
+            await SpeakAsync(_loc.Get("key.notAvailable"), ct, remember: false).ConfigureAwait(false);
+            return;
+        }
+
+        StateMachine.TryTransition(AssistantState.Processing, "api-key");
+        var result = await _keys.PasteAsync(null, ct).ConfigureAwait(false);
+        RaiseNotification(result.Works ? UiNotificationKind.Status : UiNotificationKind.Important, result.Spoken, true);
+        await SpeakAsync(result.Spoken, ct, remember: false).ConfigureAwait(false);
+        _ = RefreshAiStatusAsync(CancellationToken.None);
     }
 
     private void SetFollowUp()
@@ -1052,7 +1166,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             _history?.Append(Conversation.Id, ChatMessage.User(text));
             var messages = Conversation.BuildRequest(SystemPromptBuilder.Build(provider, Settings.General.UserName, _clock.Now));
             var chunker = new StreamingSentenceChunker();
-            queue = new SpeechPlaybackQueue(_synthesizer, _output, new SynthesisOptions(Settings.Voice.Rate), OnSpeakingStarted, _logger, ct);
+            queue = new SpeechPlaybackQueue(_synthesizer, _output, new SynthesisOptions(Settings.Voice.Rate), OnSpeakingStarted, _logger, ct, OnSentencePlaying);
             Volatile.Write(ref _aiQueue, queue);
             using var thinking = StartThinkingCue(ct);
 
@@ -1061,7 +1175,6 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             {
                 thinking.Cancel();
                 reply.Append(token);
-                AddEcho(token);
                 foreach (var sentence in chunker.Append(token))
                 {
                     queue.Enqueue(sentence);
@@ -1167,7 +1280,6 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
         _logger.LogInformation("AI fallback: {From} -> {To} ({Reason}).", e.FailedProvider, e.BackupProvider, e.Reason);
         RaiseNotification(UiNotificationKind.Status, text, true);
-        AddEcho(text);
         Volatile.Read(ref _aiQueue)?.Enqueue(text);
     }
 
@@ -1254,11 +1366,22 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         }
     }
 
-    private void AddEcho(string text)
+    /// <summary>
+    /// The echo reference is what VEDAR is playing right now: the current and the previous sentence (a piece of
+    /// audio is at most 4 s and its check takes a moment). Not the whole turn: a help text that mentions
+    /// "Ведар, спри" must not make the user's own "Ведар, спри" look like echo minutes later.
+    /// </summary>
+    private void OnSentencePlaying(string sentence)
     {
         lock (_echoReference)
         {
-            _echoReference.Append(text).Append(' ');
+            _recentSentences.Enqueue(sentence);
+            while (_recentSentences.Count > 2)
+            {
+                _recentSentences.Dequeue();
+            }
+
+            _echoReference.Clear().AppendJoin(' ', _recentSentences);
         }
     }
 
@@ -1353,7 +1476,6 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             AddTranscript(Speaker.Assistant, text);
         }
 
-        AddEcho(text);
         if (!_synthesizer.IsReady)
         {
             _logger.LogWarning("Speech synthesis unavailable; showing text only.");
@@ -1361,7 +1483,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             return;
         }
 
-        await using var queue = new SpeechPlaybackQueue(_synthesizer, _output, new SynthesisOptions(Settings.Voice.Rate), OnSpeakingStarted, _logger, ct);
+        await using var queue = new SpeechPlaybackQueue(_synthesizer, _output, new SynthesisOptions(Settings.Voice.Rate), OnSpeakingStarted, _logger, ct, OnSentencePlaying);
         queue.Enqueue(text);
         queue.Complete();
         await queue.Completion.ConfigureAwait(false);

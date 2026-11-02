@@ -85,7 +85,8 @@ public sealed class AppServices : IAsyncDisposable
 
         var system = new WindowsSystemActions(new WindowsSystemVolume(), factory.CreateLogger<WindowsSystemActions>());
         var commands = new CommandDispatcher(settings, system, uiHost, ai, history, loc, factory.CreateLogger<CommandDispatcher>(), isWakeToken: wake.IsWakeToken);
-        var orchestrator = new AssistantOrchestrator(factory.CreateLogger<AssistantOrchestrator>(), settings, listener, recognizer, wake, synthesizer, output, commands, ai, loc, history: history);
+        var orchestrator = new AssistantOrchestrator(factory.CreateLogger<AssistantOrchestrator>(), settings, listener, recognizer, wake, synthesizer, output, commands, ai, loc,
+            history: history, ui: uiHost, secrets: secrets, autoStart: autoStart);
         var downloader = new ModelDownloader(http, factory.CreateLogger<ModelDownloader>());
         var eraser = new UserDataEraser(paths, secrets, autoStart, history, factory.CreateLogger<UserDataEraser>());
 

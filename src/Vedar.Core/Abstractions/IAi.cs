@@ -67,6 +67,9 @@ public interface IConversationAi
 
     Task<AiStatus> CheckStatusAsync(CancellationToken cancellationToken);
 
+    /// <summary>Checks one service by name ("BgGPT", "Groq", "Ollama"), regardless of the backup order.</summary>
+    Task<AiStatus> CheckProviderAsync(string providerName, CancellationToken cancellationToken);
+
     /// <summary>Streams the reply text. Throws <see cref="AiProviderException"/> on failure.</summary>
     IAsyncEnumerable<string> StreamReplyAsync(IReadOnlyList<ChatMessage> messages, CancellationToken cancellationToken);
 }

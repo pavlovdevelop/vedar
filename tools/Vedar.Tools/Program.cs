@@ -378,6 +378,7 @@ internal sealed class NoUi : IUserInterfaceHost
     public void ShowConversation() { }
     public Task<string?> PickTextFileAsync(CancellationToken cancellationToken) => Task.FromResult<string?>(null);
     public Task<string?> GetClipboardTextAsync() => Task.FromResult<string?>(null);
+    public Task ClearClipboardAsync() => Task.CompletedTask;
     public void RequestExit() { }
     public void Notify(UiNotificationKind kind, string text) { }
 }
@@ -389,6 +390,7 @@ internal sealed class NoAi : IConversationAi
     public bool ActiveProviderIsCloud => true;
     public bool IsConfigured => false;
     public Task<AiStatus> CheckStatusAsync(CancellationToken cancellationToken) => Task.FromResult(new AiStatus(AiAvailability.NotConfigured, "BgGPT", true, ""));
+    public Task<AiStatus> CheckProviderAsync(string providerName, CancellationToken cancellationToken) => Task.FromResult(new AiStatus(AiAvailability.NotConfigured, providerName, true, ""));
     public IAsyncEnumerable<string> StreamReplyAsync(IReadOnlyList<ChatMessage> messages, CancellationToken cancellationToken) => AsyncEnumerable.Empty<string>();
 }
 

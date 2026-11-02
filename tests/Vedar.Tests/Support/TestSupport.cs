@@ -64,6 +64,7 @@ public sealed class FakeUiHost : IUserInterfaceHost
     public void ShowConversation() => ShowConversationCount++;
     public Task<string?> PickTextFileAsync(CancellationToken cancellationToken) => Task.FromResult(FileToPick);
     public Task<string?> GetClipboardTextAsync() => Task.FromResult(Clipboard);
+    public Task ClearClipboardAsync() { Clipboard = null; return Task.CompletedTask; }
     public void RequestExit() => ExitRequests++;
     public void Notify(UiNotificationKind kind, string text) => Notifications.Add((kind, text));
 }
@@ -237,6 +238,16 @@ public sealed class FakeConversationAi : IConversationAi
 
     public Task<AiStatus> CheckStatusAsync(CancellationToken cancellationToken) => Task.FromResult(Status);
 
+    /// <summary>Status returned per service by <see cref="CheckProviderAsync"/> (default: available).</summary>
+    public Func<string, AiStatus>? ProviderStatus { get; set; }
+    public List<string> ProviderChecks { get; } = [];
+
+    public Task<AiStatus> CheckProviderAsync(string providerName, CancellationToken cancellationToken)
+    {
+        lock (ProviderChecks) { ProviderChecks.Add(providerName); }
+        return Task.FromResult(ProviderStatus?.Invoke(providerName) ?? new AiStatus(AiAvailability.Available, providerName, true, "ok"));
+    }
+
     public void Reply(params string[] tokens) => Scripts.Enqueue(() => Tokens(tokens, TimeSpan.Zero));
     public void ReplySlowly(TimeSpan perToken, params string[] tokens) => Scripts.Enqueue(() => Tokens(tokens, perToken));
     public void Fail(AiErrorKind kind) => Scripts.Enqueue(() => Throw(kind));
@@ -313,4 +324,14 @@ public static class Wait
             await Task.Delay(10);
         }
     }
+}
+
+public sealed class FakeAutoStart : IAutoStartManager
+{
+    public bool Enabled { get; private set; }
+    public bool IsSupported => true;
+    public bool IsEnabled() => Enabled;
+    public bool IsDisabledByUser() => false;
+    public void Enable() => Enabled = true;
+    public void Disable() => Enabled = false;
 }

@@ -16,14 +16,17 @@ public sealed class SpeechPlaybackQueue : IAsyncDisposable
     private readonly IAudioOutput _output;
     private readonly SynthesisOptions _options;
     private readonly Action? _onFirstAudio;
+    private readonly Action<string>? _onSentencePlaying;
     private readonly ILogger _logger;
     private readonly CancellationToken _token;
     private readonly Task _synthesisTask;
     private readonly Task _playbackTask;
     private int _started;
 
-    public SpeechPlaybackQueue(ISpeechSynthesizer synthesizer, IAudioOutput output, SynthesisOptions options, Action? onFirstAudio, ILogger logger, CancellationToken token)
+    /// <param name="onSentencePlaying">Called with each sentence when its audio starts playing.</param>
+    public SpeechPlaybackQueue(ISpeechSynthesizer synthesizer, IAudioOutput output, SynthesisOptions options, Action? onFirstAudio, ILogger logger, CancellationToken token, Action<string>? onSentencePlaying = null)
     {
+        _onSentencePlaying = onSentencePlaying;
         _synthesizer = synthesizer;
         _output = output;
         _options = options;
@@ -92,6 +95,15 @@ public sealed class SpeechPlaybackQueue : IAsyncDisposable
                 {
                     _logger.LogWarning(ex, "Speaking-started callback failed.");
                 }
+            }
+
+            try
+            {
+                _onSentencePlaying?.Invoke(audio.Text);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Sentence callback failed.");
             }
 
             await _output.PlayAsync(audio.Samples, audio.SampleRate, _token).ConfigureAwait(false);

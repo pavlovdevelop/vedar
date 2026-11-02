@@ -62,6 +62,19 @@ public sealed class DesktopUiHost : IUserInterfaceHost
             }
         }).Task;
 
+    public Task ClearClipboardAsync() =>
+        _dispatcher.InvokeAsync(() =>
+        {
+            try
+            {
+                Clipboard.Clear();
+            }
+            catch (System.Runtime.InteropServices.COMException)
+            {
+                // Clipboard locked by another program; the key stays there.
+            }
+        }).Task;
+
     public void RequestExit() => _dispatcher.BeginInvoke(async () =>
     {
         if (ExitAction is not null)
