@@ -442,6 +442,7 @@ public class ProviderTests : IAsyncLifetime
             }
 
             await MockHttpServer.WriteSseAsync(ctx, ["Начало "], done: false);
+            await Task.Delay(300); // let the client read the token before the connection drops (as in the disconnect test)
             ctx.Abort();
         };
         var (_, _, _, _, router) = Create(AiProviderKind.BgGpt, withKey: true, withGroqKey: true);
