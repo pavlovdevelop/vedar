@@ -81,7 +81,7 @@ dotnet tests/Vedar.Tests/bin/Release/net10.0/Vedar.Tests.dll -method "*Whisper*"
 | Група | Какво проверява | Вид |
 |---|---|---|
 | Core | числа, дати, машина на състоянията, изречения, разговор, локализация, **оркестратор** (25 сценария) | unit + интеграция с двойници |
-| Speech | нормализация, транслитерация, wake word, филтри, VAD, слушател (смяна на микрофон), ONNX метаданни | unit |
+| Speech | нормализация, транслитерация, wake word, филтри, VAD, слушател (смяна на микрофон), ONNX метаданни, ускоряване на речта без промяна на тона (WSOLA) | unit |
 | Integration | **истински Whisper и Piper**: WAV от Piper, скорост, прекъсване на синтеза, FLEURS, глас → намерение | реални модели |
 | AI | SSE, JSON, **mock HTTP сървър (Kestrel)**: стрийминг, повторения, 401/429/5xx, timeout, отказ, прекъсване, без интернет, ключът не попада в дневници, Ollama, Auto | интеграция |
 | Commands | разпознаване на ~70 български фрази, въпроси към AI, диспечер, файлове (UTF-8/1251/UTF-16/docx), безопасност | unit |
@@ -97,7 +97,8 @@ dotnet tests/Vedar.Tests/bin/Release/net10.0/Vedar.Tests.dll -method "*Whisper*"
 dotnet run --project tools/Vedar.Tools -c Release -- bench-commands vocab
 dotnet run --project tools/Vedar.Tools -c Release -- bench-wakedetect ggml-base-q5_1.bin 768
 dotnet run --project tools/Vedar.Tools -c Release -- bench-wake <папка с WAV>
-dotnet run --project tools/Vedar.Tools -c Release -- synthesize "Здравей!" out.wav
+dotnet run --project tools/Vedar.Tools -c Release -- bench-rate 5
+dotnet run --project tools/Vedar.Tools -c Release -- synthesize "Здравей!" out.wav 1.5
 dotnet run --project tools/Vedar.Tools -c Release -- transcribe out.wav
 ```
 
