@@ -23,12 +23,13 @@ if (args.Length == 0)
     Console.WriteLine("""
         vedar-tools <command>
           prepare-piper <voice.onnx> <outDir>          Add sherpa-onnx metadata (copy) + tokens.txt
-          synthesize "<text>" <out.wav>                Piper TTS to WAV
+          synthesize "<text>" <out.wav> [rate]         Piper TTS to WAV (rate 0.5–2.0)
           transcribe <in.wav> [model]                  Whisper STT
           bench-commands [prompt=wake|vocab|none] [threads]   Piper → Whisper → intent round trip (synthetic voice)
           bench-wake <fleurs-wav-dir> [limit] [wakeModel] [ctx]   False wake-word activations on real speech without "Ведар"
           bench-wakedetect [wakeModel] [ctx]           Wake-word detection rate on synthetic commands (with 300 ms pre-roll)
           bench-vad [minutes]                          CPU cost of continuous listening (VAD only)
+          bench-rate [repeats]                         Speech duration at each speaking rate (Piper is stochastic: averaged)
         Models are searched in ./models, the app folder and VEDAR_MODELS_DIR.
         """);
     return 1;
@@ -75,13 +76,47 @@ switch (args[0])
         using var tts = await CreateTtsAsync();
         var all = new List<float>();
         var sw = Stopwatch.StartNew();
-        await foreach (var chunk in tts.SynthesizeAsync(args[1], new SynthesisOptions(), CancellationToken.None))
+        var rate = args.Length > 3 ? float.Parse(args[3], CultureInfo.InvariantCulture) : 1.0f;
+        await foreach (var chunk in tts.SynthesizeAsync(args[1], new SynthesisOptions(rate), CancellationToken.None))
         {
             all.AddRange(chunk.Samples);
         }
 
         WavFile.WriteMono16(args[2], all.ToArray(), tts.SampleRate);
         Console.WriteLine($"{all.Count / (double)tts.SampleRate:F2} s audio in {sw.ElapsedMilliseconds} ms → {args[2]}");
+        return 0;
+    }
+
+    case "bench-rate":
+    {
+        var repeats = args.Length > 1 ? int.Parse(args[1], CultureInfo.InvariantCulture) : 5;
+        using var tts = await CreateTtsAsync();
+        string[] sentences =
+        [
+            "Това е тест за скоростта на говорене.",
+            "Днес е понеделник, втори ноември две хиляди двадесет и шеста година.",
+            "Ведар отваря браузъра и чете избрания текст на глас.",
+        ];
+        double? baseline = null;
+        foreach (var rate in new[] { 1.0f, 0.6f, 0.8f, 1.3f, 1.6f, 2.0f })
+        {
+            var durations = new List<double>();
+            for (int r = 0; r < repeats; r++)
+            {
+                foreach (var sentence in sentences)
+                {
+                    durations.Add(tts.Generate(sentence, rate, CancellationToken.None).Length / (double)tts.SampleRate);
+                }
+            }
+
+            var total = durations.Sum() / repeats;
+            baseline ??= total;
+            var perSentence = Enumerable.Range(0, sentences.Length)
+                .Select(i => durations.Where((_, k) => k % sentences.Length == i).ToList()).ToList();
+            var spread = perSentence.Max(d => (d.Max() - d.Min()) / d.Average());
+            Console.WriteLine($"rate {rate:F1}: {total:F2} s for 3 sentences = {baseline / total:F2}x faster than 1.0 (max run-to-run spread {spread:P0})");
+        }
+
         return 0;
     }
 

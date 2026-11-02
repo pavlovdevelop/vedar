@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using SherpaOnnx;
+using Vedar.Audio.Dsp;
 using Vedar.Core.Abstractions;
 using Vedar.Core.Text;
 using Vedar.Speech.Text;
@@ -103,7 +104,11 @@ public sealed class PiperSpeechSynthesizer : ISpeechSynthesizer
         {
             var tts = _tts ?? throw new InvalidOperationException("Speech synthesis is not initialized.");
             OfflineTtsCallback callback = (_, _) => cancellationToken.IsCancellationRequested ? 0 : 1;
-            var audio = tts.GenerateWithCallback(sentence, Math.Clamp(rate, 0.5f, 2.0f), 0, callback);
+            rate = Math.Clamp(rate, 0.5f, 2.0f);
+            // Slowing down is done by the model (natural prosody). Speeding up is not: Piper's length scale gives only
+            // ~1.3x at speed 2.0, so the sentence is spoken at its natural tempo and compressed by exactly the requested
+            // factor without changing the pitch (see TimeStretch and docs/SPEECH_BENCHMARKS.md).
+            var audio = tts.GenerateWithCallback(sentence, Math.Min(rate, 1.0f), 0, callback);
             GC.KeepAlive(callback);
             cancellationToken.ThrowIfCancellationRequested();
             var samples = audio.Samples ?? [];
@@ -112,7 +117,13 @@ public sealed class PiperSpeechSynthesizer : ISpeechSynthesizer
                 return samples;
             }
 
-            var pause = SampleRate * SentencePauseMs / 1000;
+            if (rate > 1.0f)
+            {
+                samples = TimeStretch.ChangeTempo(samples, rate, SampleRate);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            var pause = (int)(SampleRate * SentencePauseMs / 1000 / Math.Max(1.0f, rate));
             var result = new float[samples.Length + pause];
             samples.CopyTo(result, 0);
             return result;

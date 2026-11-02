@@ -76,7 +76,12 @@ public class UiAutomationEndToEndTests
             Assert.Equal("Г", talk.Properties.AccessKey.ValueOrDefault, ignoreCase: true);
 
             var buttons = window.FindAllDescendants(cf => cf.ByControlType(ControlType.Button));
-            Assert.All(buttons, b => Assert.False(string.IsNullOrWhiteSpace(b.Name), "every button has an accessible name"));
+            var focusable = buttons.Where(b => b.Properties.IsKeyboardFocusable.ValueOrDefault).ToList();
+            Assert.True(focusable.Count >= 6, $"VEDAR's own buttons are reachable with the keyboard ({focusable.Count} found)");
+            Assert.All(focusable, b => Assert.False(string.IsNullOrWhiteSpace(b.Name), "every keyboard-reachable button has an accessible name"));
+            // The only unnamed buttons allowed are the parts of WPF's built-in scroll bar (not keyboard-focusable).
+            string[] scrollBarParts = ["PART_LineUpButton", "PART_LineDownButton", "PageUp", "PageDown", "PART_LineLeftButton", "PART_LineRightButton", "PageLeft", "PageRight"];
+            Assert.All(buttons.Where(b => string.IsNullOrWhiteSpace(b.Name)), b => Assert.Contains(b.Properties.AutomationId.ValueOrDefault, scrollBarParts));
 
             // Keyboard: Alt+Н opens the settings window.
             window.Focus();

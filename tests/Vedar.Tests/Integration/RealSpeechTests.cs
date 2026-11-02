@@ -84,13 +84,29 @@ public class RealSpeechTests(RealSpeechFixture fx, ITestOutputHelper output) : I
     public async Task Piper_speaking_rate_changes_duration()
     {
         SkipIfNoModels();
-        var normal = await fx.SynthesizeAsync("Това е тест за скоростта на говорене.");
-        var fast = await fx.SynthesizeAsync("Това е тест за скоростта на говорене.", 1.6f);
-        var slow = await fx.SynthesizeAsync("Това е тест за скоростта на говорене.", 0.6f);
-        output.WriteLine($"normal {normal.Length / 22050.0:F2} s, fast {fast.Length / 22050.0:F2} s, slow {slow.Length / 22050.0:F2} s");
-        // Piper/VITS quantizes phoneme durations to whole frames, so speeding up has a smaller effect than slowing down.
-        Assert.True(fast.Length < normal.Length * 0.95);
-        Assert.True(slow.Length > normal.Length * 1.3);
+        const string text = "Това е тест за скоростта на говорене.";
+        // Piper's durations are random (noise_w), up to ~10% between runs, so compare averages of three runs.
+        async Task<double> Seconds(float rate)
+        {
+            double total = 0;
+            for (int i = 0; i < 3; i++)
+            {
+                total += (await fx.SynthesizeAsync(text, rate)).Length / 22050.0;
+            }
+
+            return total / 3;
+        }
+
+        var normal = await Seconds(1.0f);
+        var fast = await Seconds(1.6f);
+        var faster = await Seconds(2.0f);
+        var slow = await Seconds(0.6f);
+        output.WriteLine($"normal {normal:F2} s, 1.6x {fast:F2} s ({normal / fast:F2}x), 2.0x {faster:F2} s ({normal / faster:F2}x), 0.6x {slow:F2} s ({slow / normal:F2}x longer)");
+        // Speeding up is exact (time compression of the natural tempo): expected 1.6x and 2.0x.
+        Assert.InRange(normal / fast, 1.4, 1.85);
+        Assert.InRange(normal / faster, 1.75, 2.3);
+        // Slowing down is done by the model (sub-linear: ~1.35x longer at 0.6, see docs/SPEECH_BENCHMARKS.md).
+        Assert.True(slow > normal * 1.15, "slower speech lasts longer");
     }
 
     [Fact]

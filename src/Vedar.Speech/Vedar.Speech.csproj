@@ -15,5 +15,6 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Vedar.Tests" />
+    <InternalsVisibleTo Include="vedar-tools" />
   </ItemGroup>
 </Project>
