@@ -211,6 +211,62 @@ public class RealSpeechTests(RealSpeechFixture fx, ITestOutputHelper output) : I
         Assert.True(wakeOk >= cases.Length * 0.8, $"wake word detection {wakeOk}/{cases.Length}");
     }
 
+    [Fact]
+    public async Task Greetings_with_the_name_go_from_voice_to_small_talk()
+    {
+        SkipIfNoModels();
+        var cases = new (string Spoken, string Intent)[]
+        {
+            ("Здравей, Ведар!", "greeting"),
+            ("Добро утро, Ведар.", "greeting"),
+            ("Как си, Ведар?", "howAreYou"),
+            ("Благодаря, Ведар.", "thanks"),
+        };
+        var wake = new WakeWordMatcher();
+        var dispatcher = new CommandDispatcher(new TestSettingsStore(), new FakeSystemActions(), new FakeUiHost(), new FakeConversationAi(), new FakeHistoryStore(),
+            Localizer.Load("bg"), Log.Null<CommandDispatcher>(), isWakeToken: wake.IsWakeToken);
+        int wakeOk = 0, intentOk = 0;
+        foreach (var (spoken, intent) in cases)
+        {
+            var audio = new float[4800].Concat(StreamingResampler.Resample(await fx.SynthesizeAsync(spoken), 22050, 16000)).ToArray();
+            var wakeScan = await fx.Recognizer!.RecognizeAsync(audio, new RecognitionRequest(RecognitionPurpose.WakeWord, RecognitionPrompts.WakeWord), CancellationToken.None);
+            var full = await fx.Recognizer!.RecognizeAsync(audio, new RecognitionRequest(RecognitionPurpose.Command, RecognitionPrompts.Commands), CancellationToken.None);
+            var match = wake.Match(full.Text);
+            var recognized = dispatcher.Recognizer.Recognize(match.IsMatch ? match.Request : full.Text)?.IntentId;
+            var wakeDetected = wake.Match(wakeScan.Text).IsMatch;
+            wakeOk += wakeDetected ? 1 : 0;
+            intentOk += recognized == intent ? 1 : 0;
+            output.WriteLine($"{spoken} → wake: '{wakeScan.Text}' ({wakeDetected}); full: '{full.Text}' → {recognized ?? "-"} (expected {intent})");
+        }
+
+        output.WriteLine($"Wake word detected {wakeOk}/{cases.Length}, intent correct {intentOk}/{cases.Length}.");
+        Assert.True(intentOk >= 3, $"intent accuracy {intentOk}/{cases.Length}");
+        Assert.True(wakeOk >= 2, $"wake word detection {wakeOk}/{cases.Length}");
+    }
+
+    [Fact]
+    public async Task A_cancelled_early_recognition_does_not_break_the_next_one()
+    {
+        SkipIfNoModels();
+        // VEDAR starts recognizing in a pause; if the user goes on, that recognition is cancelled. whisper.cpp only
+        // checks for cancellation after its encoder, so the next recognition may wait for it — but it must work.
+        var audio = StreamingResampler.Resample(await fx.SynthesizeAsync(
+            "Разкажи ми, моля те, нещо интересно за историята на България през средновековието и за първите български царе."), 22050, 16000);
+        var command = StreamingResampler.Resample(await fx.SynthesizeAsync("Ведар, колко е часът?"), 22050, 16000);
+        var request = new RecognitionRequest(RecognitionPurpose.Command, RecognitionPrompts.Commands);
+        var alone = await fx.Recognizer!.RecognizeAsync(command, request, CancellationToken.None);
+
+        using var cts = new CancellationTokenSource();
+        var early = fx.Recognizer!.RecognizeAsync(audio, request, cts.Token);
+        await Task.Delay(400);
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => early);
+        var next = await fx.Recognizer!.RecognizeAsync(command, request, CancellationToken.None);
+
+        output.WriteLine($"Alone: '{alone.Text}' {alone.ProcessingTime.TotalMilliseconds:F0} ms; after a cancelled one: '{next.Text}' {next.ProcessingTime.TotalMilliseconds:F0} ms.");
+        Assert.Equal(alone.Text, next.Text);
+    }
+
     private const string LongAnswer = "Софийският университет е основан през хиляда осемстотин осемдесет и осма година. Той е най-старото висше училище в България и днес в него учат десетки хиляди студенти.";
 
     private async Task<string> HearWhileSpeakingAsync(float[] piece)
@@ -269,7 +325,9 @@ public class RealSpeechTests(RealSpeechFixture fx, ITestOutputHelper output) : I
         var answer = StreamingResampler.Resample(await fx.SynthesizeAsync(LongAnswer), 22050, 16000);
         var user = StreamingResampler.Resample(await fx.SynthesizeAsync("Ведар, спри!", 1.1f), 22050, 16000);
         int stops = 0, tries = 0;
-        foreach (var offset in new[] { 0.5, 2.0, 5.0 })
+        // Six positions: Piper's voice differs on every run, and with three a single unlucky run failed now and then
+        // (measured rate ~87%; at least half must be recognized).
+        foreach (var offset in new[] { 0.5, 2.0, 3.5, 5.0, 6.5, 8.0 })
         {
             var start = (int)(offset * 16000);
             var piece = new float[Math.Min(4 * 16000, user.Length + 16000)];
@@ -292,7 +350,7 @@ public class RealSpeechTests(RealSpeechFixture fx, ITestOutputHelper output) : I
 
         // Same synthetic voice for VEDAR and "the user" is the hard case; a real user sounds different and is closer to the microphone.
         output.WriteLine($"recognised {stops}/{tries}");
-        Assert.True(stops >= 2, $"{stops}/{tries} recognised over VEDAR's own voice at gain {echoGain}");
+        Assert.True(stops >= tries / 2, $"{stops}/{tries} recognised over VEDAR's own voice at gain {echoGain}");
     }
 }
 

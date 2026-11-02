@@ -8,8 +8,11 @@ namespace Vedar.Core.Settings;
 /// </summary>
 public sealed class VedarSettings
 {
-    /// <summary>2: longer listening (pause at the end of speech, follow-up and command windows).</summary>
-    public const int CurrentSchemaVersion = 2;
+    /// <summary>
+    /// 2: longer listening (pause at the end of speech, follow-up and command windows).
+    /// 3: natural conversation — no beeps by default, VEDAR keeps listening for 30 s after it has spoken.
+    /// </summary>
+    public const int CurrentSchemaVersion = 3;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public GeneralSettings General { get; set; } = new();
@@ -70,7 +73,17 @@ public sealed class VedarSettings
             }
         }
 
-        Activation.FollowUpSeconds = Math.Clamp(Activation.FollowUpSeconds, 0, 30);
+        if (SchemaVersion < 3)
+        {
+            // Users found the listening beeps rushing and the short listening windows wooden.
+            Voice.Earcons = false;
+            if (Activation.FollowUpSeconds is 8 or 15)
+            {
+                Activation.FollowUpSeconds = ActivationSettings.DefaultFollowUpSeconds;
+            }
+        }
+
+        Activation.FollowUpSeconds = Math.Clamp(Activation.FollowUpSeconds, 0, ActivationSettings.MaxFollowUpSeconds);
         Activation.CommandListenTimeoutSeconds = Math.Clamp(Activation.CommandListenTimeoutSeconds, 3, 20);
         Activation.EndOfSpeechPauseMs = Math.Clamp(Activation.EndOfSpeechPauseMs, ActivationSettings.MinEndOfSpeechPauseMs, ActivationSettings.MaxEndOfSpeechPauseMs);
         Ai.MaxResponseTokens = Math.Clamp(Ai.MaxResponseTokens, 50, 4000);
@@ -114,8 +127,8 @@ public sealed class VoiceSettings
     public float Volume { get; set; } = 0.9f;
     /// <summary>Output device id; null = Windows default output.</summary>
     public string? OutputDeviceId { get; set; }
-    /// <summary>Short tones that signal "listening" / "done" without words.</summary>
-    public bool Earcons { get; set; } = true;
+    /// <summary>Short tones that signal "listening" / "done" without words. Off by default: in a natural conversation they rush the user.</summary>
+    public bool Earcons { get; set; }
 }
 
 public sealed class MicrophoneSettings
@@ -160,13 +173,17 @@ public sealed class ActivationSettings
     public string PushToTalkHotkey { get; set; } = DefaultPushToTalk;
     public string StopHotkey { get; set; } = DefaultStop;
     public string MicrophoneToggleHotkey { get; set; } = DefaultMicToggle;
-    public const int DefaultFollowUpSeconds = 15;
+    public const int DefaultFollowUpSeconds = 30;
+    public const int MaxFollowUpSeconds = 120;
     public const int DefaultCommandListenTimeoutSeconds = 10;
     public const int DefaultEndOfSpeechPauseMs = 1400;
     public const int MinEndOfSpeechPauseMs = 600;
     public const int MaxEndOfSpeechPauseMs = 3000;
 
-    /// <summary>After VEDAR answers in a conversation, listen this many seconds for a follow-up without the wake word.</summary>
+    /// <summary>
+    /// After VEDAR has said something to the user, it keeps listening this long without the wake word — like a
+    /// person who waits for your answer. Silent: no beep. 0 = always require the wake word.
+    /// </summary>
     public int FollowUpSeconds { get; set; } = DefaultFollowUpSeconds;
     /// <summary>How long to wait for a command after the wake word / push-to-talk before giving up.</summary>
     public int CommandListenTimeoutSeconds { get; set; } = DefaultCommandListenTimeoutSeconds;

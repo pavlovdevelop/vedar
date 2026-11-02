@@ -340,7 +340,7 @@ public class SettingsMigrationTests
         Assert.Equal(10, old.Activation.CommandListenTimeoutSeconds);
         Assert.Equal(12, old.Activation.FollowUpSeconds);
         Assert.Equal(1400, old.Activation.EndOfSpeechPauseMs);
-        Assert.Equal(2, old.SchemaVersion);
+        Assert.Equal(Vedar.Core.Settings.VedarSettings.CurrentSchemaVersion, old.SchemaVersion);
 
         var wild = new Vedar.Core.Settings.VedarSettings();
         wild.Activation.EndOfSpeechPauseMs = 50;

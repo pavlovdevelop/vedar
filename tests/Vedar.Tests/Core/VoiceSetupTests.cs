@@ -63,7 +63,34 @@ public class VoiceSetupTests
         Assert.Contains("Настройката приключи", h.Spoken);
         Assert.DoesNotContain(BgGptKey, h.Spoken); // the key is never read aloud
         Assert.DoesNotContain(h.Transcript, t => t.Text.Contains(BgGptKey));
-        Assert.Equal(AssistantState.Idle, h.Orchestrator.State);
+        Assert.Equal(AssistantState.Listening, h.Orchestrator.State); // the conversation can go on without "Ведар"
+        Assert.Contains(SetupKeyWindow, h.Listener.WindowHistory); // a minute to copy the key
+    }
+
+    private const int SetupKeyWindow = Vedar.Core.Setup.VoiceSetupDialog.KeyListenSeconds;
+
+    [Fact]
+    public async Task While_the_key_is_copied_with_the_screen_reader_its_speech_is_not_answered()
+    {
+        await using var h = FirstRun();
+        await h.StartAsync();
+        await h.Orchestrator.StartVoiceSetupAsync();
+        await AnswerAsync(h, "пропусни"); // name
+        await AnswerAsync(h, "добре");    // speed
+        await AnswerAsync(h, "не");       // autostart
+        Assert.Contains("ключ за BgGPT", h.Spoken);
+
+        await Wait.UntilAsync(() => h.Listener.Mode == ListeningMode.Command && !h.Listener.Suppressed && h.Orchestrator.State == AssistantState.Listening);
+        await Task.Delay(400);
+        h.Activity.TypeNow(); // Ctrl+C in the e-mail while the screen reader reads it
+        var spoken = h.Synth.Spoken.Count;
+        await AnswerAsync(h, "Входяща поща. Писмо от BgGPT с вашия ключ.");
+        Assert.Equal(spoken, h.Synth.Spoken.Count); // VEDAR does not talk over the screen reader
+        Assert.True(h.Orchestrator.InVoiceSetup);
+
+        h.Ui.Clipboard = BgGptKey;
+        await AnswerAsync(h, "Готово.");
+        Assert.Equal(BgGptKey, h.Secrets.Get(SecretNames.BgGptApiKey));
     }
 
     [Fact]

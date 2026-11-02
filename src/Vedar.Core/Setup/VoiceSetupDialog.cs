@@ -55,6 +55,14 @@ public sealed class VoiceSetupDialog
         _ => null,
     };
 
+    /// <summary>
+    /// How long to wait for the answer (seconds; 0 = the usual command window). Copying a key with the screen reader
+    /// takes a while, so VEDAR waits a minute there.
+    /// </summary>
+    public int ListenSeconds => _step is Step.BgGptKey or Step.GroqKey ? KeyListenSeconds : 0;
+
+    public const int KeyListenSeconds = 60;
+
     public SetupReply Start() => Ask(_loc.Get("setup.intro") + " " + _loc.Get("setup.askName"));
 
     /// <summary>Nothing was heard after a question: repeat it once, then pause the setup.</summary>
@@ -65,10 +73,43 @@ public sealed class VoiceSetupDialog
             return new SetupReply(_loc.Get("setup.paused"), true);
         }
 
-        return Ask(_loc.Get("setup.silence") + " " + CurrentQuestion());
+        // While a key is being copied, a short reminder is enough (the long explanation was given).
+        return _step is Step.BgGptKey or Step.GroqKey
+            ? Ask(_loc.Get("setup.keyUnclear"))
+            : Ask(_loc.Get("setup.silence") + " " + CurrentQuestion());
     }
 
-    public async Task<SetupReply> HandleAsync(string text, CancellationToken cancellationToken)
+    /// <summary>
+    /// The text is a complete answer to the current question ("да", "по-бързо", "готово", a name), so VEDAR may
+    /// answer after a shorter pause. "Казвам се…" is not: the name follows.
+    /// </summary>
+    public bool IsCompleteAnswer(string text)
+    {
+        var norm = BulgarianText.NormalizeForMatching(text);
+        if (norm.Length == 0)
+        {
+            return false;
+        }
+
+        if (IsQuit(norm) || IsSkip(norm))
+        {
+            return true;
+        }
+
+        return _step switch
+        {
+            Step.Name => ExtractName(text) is not null,
+            Step.ConfirmName or Step.Autostart => ConfirmationParser.Parse(text) != ConfirmationAnswer.Unknown,
+            Step.Speed => SpeedAnswer(norm) is not null,
+            _ => IsReady(norm) || ConfirmationParser.Parse(norm) == ConfirmationAnswer.No,
+        };
+    }
+
+    /// <param name="userBusy">
+    /// The user has used the keyboard since the question (for example to copy the key with the screen reader): an
+    /// unclear answer is then probably the screen reader talking, and VEDAR keeps quiet instead of answering it.
+    /// </param>
+    public async Task<SetupReply> HandleAsync(string text, CancellationToken cancellationToken, bool userBusy = false)
     {
         _silences = 0;
         var norm = BulgarianText.NormalizeForMatching(text);
@@ -78,6 +119,10 @@ public sealed class VoiceSetupDialog
         }
 
         var skip = IsSkip(norm);
+        if (userBusy && !skip && (_step is Step.BgGptKey or Step.GroqKey) && !IsReady(norm) && ConfirmationParser.Parse(norm) == ConfirmationAnswer.Unknown)
+        {
+            return Ask(string.Empty); // keep listening quietly
+        }
         switch (_step)
         {
             case Step.Name:
@@ -139,21 +184,34 @@ public sealed class VoiceSetupDialog
         return Finish(_loc.Get("setup.done"));
     }
 
-    private SetupReply HandleSpeed(string norm, bool skip)
+    /// <summary>+1 faster, -1 slower, 0 keep as it is ("добре"), null unclear.</summary>
+    private static int? SpeedAnswer(string norm)
     {
         var tokens = norm.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         bool faster = norm.Contains("по бързо", StringComparison.Ordinal) || norm.Contains("побързо", StringComparison.Ordinal) || tokens.Contains("бързо") || tokens.Contains("ускори");
         bool slower = norm.Contains("по бавно", StringComparison.Ordinal) || norm.Contains("побавно", StringComparison.Ordinal) || tokens.Contains("бавно") || tokens.Contains("забави");
-        if (skip || (!faster && !slower && (tokens.Contains("добре") || ConfirmationParser.Parse(norm) == ConfirmationAnswer.Yes)))
+        if (!faster && !slower && (tokens.Contains("добре") || ConfirmationParser.Parse(norm) == ConfirmationAnswer.Yes))
+        {
+            return 0;
+        }
+
+        return faster == slower ? null : faster ? 1 : -1;
+    }
+
+    private SetupReply HandleSpeed(string norm, bool skip)
+    {
+        var answer = SpeedAnswer(norm);
+        if (skip || answer == 0)
         {
             return Next(Step.Autostart, _loc.Format("setup.explainUse", _talkHotkey, _stopHotkey));
         }
 
-        if (faster == slower)
+        if (answer is null)
         {
             return Ask(_loc.Get("setup.speedUnclear"));
         }
 
+        var faster = answer > 0;
         var s = _settings.Current;
         var rate = (float)Math.Round(Math.Clamp(s.Voice.Rate + (faster ? RateStep : -RateStep), MinRate, MaxRate), 2);
         var atLimit = Math.Abs(rate - s.Voice.Rate) < 0.01f;
@@ -175,9 +233,7 @@ public sealed class VoiceSetupDialog
             return groq ? Finish(_loc.Get("setup.done")) : Next(Step.GroqKey, null);
         }
 
-        var tokens = norm.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var ready = tokens.Any(t => t is "готово" or "готов" or "готова" or "копирах" or "копирано" or "поставих") || ConfirmationParser.Parse(norm) == ConfirmationAnswer.Yes;
-        if (!ready)
+        if (!IsReady(norm))
         {
             return Ask(_loc.Get("setup.keyUnclear"));
         }
@@ -198,6 +254,11 @@ public sealed class VoiceSetupDialog
 
         return Ask(result.Spoken + " " + _loc.Get("setup.keyRetry"));
     }
+
+    /// <summary>"Готово", "копирах", "да" — the key is on the clipboard.</summary>
+    private static bool IsReady(string norm) =>
+        norm.Split(' ', StringSplitOptions.RemoveEmptyEntries).Any(t => t is "готово" or "готов" or "готова" or "копирах" or "копирано" or "поставих")
+        || ConfirmationParser.Parse(norm) == ConfirmationAnswer.Yes;
 
     private void SetAutoStart(bool enabled)
     {

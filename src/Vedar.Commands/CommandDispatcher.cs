@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Vedar.Commands.Files;
 using Vedar.Commands.Matching;
 using Vedar.Core.Abstractions;
+using Vedar.Core.Conversation;
 using Vedar.Core.Localization;
 using Vedar.Core.Settings;
 using Vedar.Core.Text;
@@ -31,6 +32,13 @@ public sealed class CommandDispatcher : ICommandDispatcher
     private readonly ILogger<CommandDispatcher> _logger;
     private readonly TextFileReader _reader = new();
     private readonly IntentRecognizer _recognizer;
+    private readonly SmallTalk _smallTalk;
+
+    /// <summary>Intents that are usually followed by more words ("Здравей, …", "Добре, …", "Искам да поговорим за …").</summary>
+    private static readonly HashSet<string> OftenContinued = new(StringComparer.Ordinal)
+    {
+        "greeting", "ack", "startConversation", "startConversation.chatgpt", "openWebsite",
+    };
 
     public CommandDispatcher(
         ISettingsStore settings,
@@ -41,7 +49,8 @@ public sealed class CommandDispatcher : ICommandDispatcher
         Localizer localizer,
         ILogger<CommandDispatcher> logger,
         IClock? clock = null,
-        Func<string, bool>? isWakeToken = null)
+        Func<string, bool>? isWakeToken = null,
+        SmallTalk? smallTalk = null)
     {
         _settings = settings;
         _system = system;
@@ -51,10 +60,16 @@ public sealed class CommandDispatcher : ICommandDispatcher
         _loc = localizer;
         _logger = logger;
         _clock = clock ?? SystemClock.Instance;
+        _smallTalk = smallTalk ?? new SmallTalk(localizer, _clock);
         _recognizer = BuildRecognizer(new IntentRecognizer(isWakeToken), this);
     }
 
     public IntentRecognizer Recognizer => _recognizer;
+
+    public bool IsCompleteCommand(string text) =>
+        _recognizer.Recognize(text) is { } match && !OftenContinued.Contains(match.IntentId);
+
+    public string? FindIntent(string text) => _recognizer.Recognize(text)?.IntentId;
 
     /// <summary>All command patterns. Order matters only for ties.</summary>
     internal static IntentRecognizer BuildRecognizer(IntentRecognizer r, CommandDispatcher? owner)
@@ -121,8 +136,14 @@ public sealed class CommandDispatcher : ICommandDispatcher
             .Add("startConversation", "bggpt|изкуствен|изкуствения интелект?", 3)
             .Add("endConversation", "затвори|приключи|прекрати|спри|край|приключваме разговора|разговор|разговорът|чата|чат", 1)
             .Add("endConversation", "край на? разговора", 1)
-            .Add("endConversation", "довиждане|чао", 1)
             .Add("endConversation", "това е всичко", 1)
+            .Add("farewell", "довиждане|чао|чаочао", 1)
+            .Add("farewell", "лека нощ", 1)
+            .Add("farewell", "леканощ", 1)
+            .Add("farewell", "до скоро|утре|довечера|после", 1)
+            .Add("farewell", "приятен ден", 1)
+            .Add("farewell", "приятна вечер", 1)
+            .Add("farewell", "ще се чуем", 1)
             .Add("help", "помощ|помогни", 1)
             .Add("help", "какво можеш|умееш правиш?", 1)
             .Add("help", "какви команди|неща знаеш|има|разбираш|можеш?", 2)
@@ -137,7 +158,15 @@ public sealed class CommandDispatcher : ICommandDispatcher
             .Add("whoAreYou", "кой|какво си ти?", 1)
             .Add("whoAreYou", "как се казваш", 1)
             .Add("thanks", "благодаря|мерси|благодарим|благодаря", 1)
-            .Add("howAreYou", "как си|сте", 1);
+            .Add("howAreYou", "как си|сте", 1)
+            .Add("howAreYou", "какси", 0)
+            .Add("howAreYou", "как върви|вървят", 1)
+            .Add("howAreYou", "какво правиш", 0)
+            .Add("greeting", "здравей|здрасти|здравейте|здрасте|привет", 1)
+            .Add("greeting", "добро утро", 1)
+            .Add("greeting", "добър|добра ден|вечер", 1)
+            .Add("greeting", "доброутро|добърден|добървечер", 1)
+            .Add("ack", "добре|ясно|разбрах|разбирам|окей|ок|аха|хубаво|чудесно|супер|страхотно|отлично|става|дадено", 0);
     }
 
     public IReadOnlyList<string> DescribeCommands() =>
@@ -151,6 +180,17 @@ public sealed class CommandDispatcher : ICommandDispatcher
     public async Task<CommandResult> DispatchAsync(string text, CancellationToken cancellationToken)
     {
         var match = _recognizer.Recognize(text);
+
+        // "Добре съм, благодаря." right after VEDAR asked "А ти как си?" is the answer, not a command.
+        if (_smallTalk.AwaitsFeeling && (match is null || match.IntentId is "ack" or "thanks" or "greeting" or "howAreYou")
+            && SmallTalk.ClassifyFeeling(text) != Feeling.Unknown)
+        {
+            var reply = _smallTalk.ReplyToFeeling(text, _ai.IsConfigured);
+            return reply is null
+                ? CommandResult.NotRecognized // feeling bad: the AI answers with empathy (it gets the exchange as context)
+                : CommandResult.Done(SmallTalk.FeelingCommandId, reply);
+        }
+
         if (match is null)
         {
             return CommandResult.NotRecognized;
@@ -165,7 +205,7 @@ public sealed class CommandDispatcher : ICommandDispatcher
         _logger.LogInformation("Intent {Intent} (score {Score:F2}, extras {Extras}).", match.IntentId, match.Score, match.Extras);
         try
         {
-            return await ExecuteAsync(match, cancellationToken).ConfigureAwait(false);
+            return await ExecuteAsync(match, text, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -178,7 +218,7 @@ public sealed class CommandDispatcher : ICommandDispatcher
         }
     }
 
-    private async Task<CommandResult> ExecuteAsync(IntentMatch match, CancellationToken ct)
+    private async Task<CommandResult> ExecuteAsync(IntentMatch match, string text, CancellationToken ct)
     {
         var now = _clock.Now;
         var id = match.IntentId;
@@ -265,13 +305,22 @@ public sealed class CommandDispatcher : ICommandDispatcher
             case "whoAreYou":
                 return CommandResult.Done(id, _loc.Format("speech.whoAreYou", _ai.ActiveProviderName));
             case "thanks":
-                return CommandResult.Done(id, _loc.Pick("speech.thanks"));
+                return CommandResult.Done(SmallTalk.CommandPrefix + id, _loc.Pick("speech.thanks"));
             case "howAreYou":
-                return CommandResult.Done(id, _loc.Pick("speech.howAreYou"), AssistantDirective.None);
+                return CommandResult.Done(SmallTalk.CommandPrefix + id, _smallTalk.ReplyToHowAreYou(text, UserName));
+            case "greeting":
+                return CommandResult.Done(SmallTalk.CommandPrefix + id, _smallTalk.ReplyToGreeting(text, UserName));
+            case "farewell":
+                return CommandResult.Done(SmallTalk.CommandPrefix + id, _smallTalk.Farewell(text, UserName), AssistantDirective.EndConversation);
+            case "ack":
+                // "Добре." / "Ясно." after an answer: nothing to say, like a person who just nods.
+                return CommandResult.Done(SmallTalk.AckCommandId, null);
             default:
                 return CommandResult.NotRecognized;
         }
     }
+
+    private string? UserName => _settings.Current.General.UserName;
 
     public WebsiteShortcut? FindWebsite(string spoken)
     {

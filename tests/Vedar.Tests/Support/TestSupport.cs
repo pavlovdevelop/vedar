@@ -101,6 +101,8 @@ public sealed class FakeSpeechRecognizer : ISpeechRecognizer
     public bool Ready { get; set; } = true;
     public Exception? ThrowOnce { get; set; }
     public TimeSpan Delay { get; set; } = TimeSpan.Zero;
+    /// <summary>The processing time reported in the results (how fast the "computer" is).</summary>
+    public TimeSpan ReportedTime { get; set; } = TimeSpan.FromMilliseconds(5);
     public string EngineName => "fake";
     public bool IsReady => Ready;
     public void Enqueue(params string[] transcripts) { foreach (var t in transcripts) { _scripted.Enqueue(t); } }
@@ -121,7 +123,7 @@ public sealed class FakeSpeechRecognizer : ISpeechRecognizer
         }
 
         var text = Responder?.Invoke(samples16k, request) ?? (_scripted.TryDequeue(out var t) ? t : string.Empty);
-        return new RecognitionResult(text, 0.9f, TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(5));
+        return new RecognitionResult(text, 0.9f, TimeSpan.FromSeconds(1), ReportedTime);
     }
 
     public void Dispose() { }
@@ -167,11 +169,60 @@ public sealed class FakeVoiceListener : IVoiceListener
     public event EventHandler<UtteranceEventArgs>? UtteranceCaptured;
     public event EventHandler<UtteranceEventArgs>? BargeInCaptured;
     public event EventHandler? BargeInSpeechStarted;
+    public event EventHandler<UtteranceEventArgs>? SpeechPaused;
+    public event EventHandler? SpeechResumed;
     public event EventHandler? SpeechStarted;
     public event EventHandler? CommandTimeout;
     public event EventHandler<AudioDeviceErrorEventArgs>? MicrophoneError;
     public bool BargeInEnabled { get; set; }
     public bool BargeInContinuation { get; set; }
+
+    private int _window;
+    /// <summary>The listening window last requested (0 = the default command window).</summary>
+    public int ListeningWindowSeconds { get => _window; set { _window = value; lock (WindowHistory) { WindowHistory.Add(value); } } }
+    public List<int> WindowHistory { get; } = [];
+
+    /// <summary>Silence lengths VEDAR asked to commit at (an early answer).</summary>
+    public List<int> CommitRequests { get; } = [];
+    public void CommitAtSilence(int silenceMs) { lock (CommitRequests) { CommitRequests.Add(silenceMs); } }
+
+    /// <summary>Simulates the user starting to speak in a command window (no utterance yet).</summary>
+    public bool EmitSpeechStart()
+    {
+        if (Mode == ListeningMode.Off || Suppressed)
+        {
+            return false;
+        }
+
+        SpeechStarted?.Invoke(this, EventArgs.Empty);
+        return true;
+    }
+
+    /// <summary>Simulates a short pause in a command utterance (the audio so far).</summary>
+    public bool EmitPause(float seconds = 1.0f)
+    {
+        if (Mode != ListeningMode.Command || Suppressed)
+        {
+            return false;
+        }
+
+        SpeechPaused?.Invoke(this, new UtteranceEventArgs(new float[(int)(16000 * seconds)], Mode, false));
+        return true;
+    }
+
+    public void EmitResume() => SpeechResumed?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>Simulates the end of an utterance whose start was already emitted (no new SpeechStarted).</summary>
+    public bool EmitEnd(float seconds = 1.5f)
+    {
+        if (Mode == ListeningMode.Off || Suppressed)
+        {
+            return false;
+        }
+
+        UtteranceCaptured?.Invoke(this, new UtteranceEventArgs(new float[(int)(16000 * seconds)], Mode, true));
+        return true;
+    }
 
     /// <summary>Simulates the user going on speaking while VEDAR recognizes the first part. False if not listening for it.</summary>
     public bool EmitContinuation(float seconds = 1.5f)
@@ -339,6 +390,14 @@ public static class Wait
             await Task.Delay(10);
         }
     }
+}
+
+/// <summary>Keyboard/mouse activity controlled by the test.</summary>
+public sealed class FakeUserActivity : IUserActivityMonitor
+{
+    private DateTime? _lastInputUtc;
+    public void TypeNow() => _lastInputUtc = DateTime.UtcNow;
+    public TimeSpan? TimeSinceLastInput => _lastInputUtc is { } t ? DateTime.UtcNow - t : TimeSpan.FromHours(1);
 }
 
 public sealed class FakeAutoStart : IAutoStartManager

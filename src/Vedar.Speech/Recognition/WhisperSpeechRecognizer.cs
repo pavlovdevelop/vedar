@@ -38,6 +38,9 @@ public sealed class WhisperSpeechRecognizer : ISpeechRecognizer
     /// <summary>Encoder window for the wake-word scan (whisper.cpp audio_ctx; 1500 = 30 s). Smaller is faster.</summary>
     public int WakeAudioContext { get; set; } = ShortAudioContext;
 
+    /// <summary>Audio context for commands of up to <see cref="ShortAudioMaxSeconds"/> (benchmarks only; 0 = adaptive).</summary>
+    internal int CommandAudioContext { get; set; } = ShortAudioContext;
+
     public string? LoadedModelPath { get; private set; }
     public string? LoadedWakeModelPath { get; private set; }
 
@@ -106,7 +109,7 @@ public sealed class WhisperSpeechRecognizer : ISpeechRecognizer
 
             input = Pad(input);
             var seconds = input.Length / (double)AudioFrameEventArgs.SampleRate;
-            var ctx = wake ? WakeAudioContext : seconds <= ShortAudioMaxSeconds ? ShortAudioContext : 0;
+            var ctx = wake ? WakeAudioContext : seconds <= ShortAudioMaxSeconds ? CommandContextFor(seconds) : 0;
             var processor = GetProcessor(wake, request.Prompt, ctx);
 
             var text = new StringBuilder();
@@ -175,6 +178,8 @@ public sealed class WhisperSpeechRecognizer : ISpeechRecognizer
         input.CopyTo(padded, Math.Max(PadSamples, (length - input.Length) / 2));
         return padded;
     }
+
+    private int CommandContextFor(double seconds) => CommandAudioContext > 0 ? CommandAudioContext : ShortAudioContext;
 
     private WhisperProcessor GetProcessor(bool wake, string? prompt, int ctx)
     {

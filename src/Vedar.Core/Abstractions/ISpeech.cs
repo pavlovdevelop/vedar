@@ -75,6 +75,16 @@ public interface IVoiceListener : IDisposable
     /// end-of-speech pause instead of after 4 s, and even very short pieces are reported.
     /// </summary>
     bool BargeInContinuation { get; set; }
+    /// <summary>
+    /// How long the next command listening waits for speech to start (seconds; 0 = the setting
+    /// <c>CommandListenTimeoutSeconds</c>). Set before switching to <see cref="ListeningMode.Command"/>.
+    /// </summary>
+    int ListeningWindowSeconds { get; set; }
+    /// <summary>
+    /// Ends the current command utterance once the user's pause reaches <paramref name="silenceMs"/> (at once if it
+    /// already has). Cancelled if the user goes on speaking. Used to answer as soon as a sentence is complete.
+    /// </summary>
+    void CommitAtSilence(int silenceMs);
     /// <summary>Current input level 0..1 (for the microphone meter).</summary>
     float Level { get; }
 
@@ -89,18 +99,33 @@ public interface IVoiceListener : IDisposable
     event EventHandler<UtteranceEventArgs>? BargeInCaptured;
     /// <summary>Speech started while suppressed and <see cref="BargeInEnabled"/> (the user is talking).</summary>
     event EventHandler? BargeInSpeechStarted;
+    /// <summary>The user paused for a moment in a command utterance; carries the audio so far (to recognize it early).</summary>
+    event EventHandler<UtteranceEventArgs>? SpeechPaused;
+    /// <summary>The user went on speaking after <see cref="SpeechPaused"/>.</summary>
+    event EventHandler? SpeechResumed;
     event EventHandler? SpeechStarted;
     /// <summary>No speech started within the command timeout.</summary>
     event EventHandler? CommandTimeout;
     event EventHandler<AudioDeviceErrorEventArgs>? MicrophoneError;
 }
 
-public sealed record WakeWordMatch(bool IsMatch, string Command, string MatchedToken)
+/// <param name="Command">What follows the wake word ("Ведар, колко е часът" → "колко е часът").</param>
+/// <param name="Before">
+/// A short social phrase said with the wake word: "Здравей, Ведар" → "Здравей", "Как си, Ведар?" → "Как си".
+/// Used as the request when nothing follows the wake word. Empty for fillers such as "ей" or "ами".
+/// </param>
+public sealed record WakeWordMatch(bool IsMatch, string Command, string MatchedToken, string Before = "")
 {
+    /// <summary>The request without the wake word: "Здравей, Ведар, колко е часът?" → "Здравей, колко е часът?".</summary>
+    public string Request => string.IsNullOrWhiteSpace(Before) ? Command : string.IsNullOrWhiteSpace(Command) ? Before : Before + ", " + Command;
+
     public static readonly WakeWordMatch None = new(false, string.Empty, string.Empty);
 }
 
-/// <summary>Decides whether a transcript starts with the wake word and extracts the command after it.</summary>
+/// <summary>
+/// Decides whether a transcript is addressed to VEDAR — the wake word at the start (after a filler or a greeting),
+/// or at the end of a short phrase ("Как си, Ведар?") — and extracts the request.
+/// </summary>
 public interface IWakeWordMatcher
 {
     WakeWordMatch Match(string transcript);

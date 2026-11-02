@@ -12,6 +12,10 @@ public sealed class VoiceListener : IVoiceListener
 {
     private const int PreRollFrames = 10; // 300 ms before speech start
     private const int BargeInMaxSamples = 4 * AudioFrameEventArgs.SampleRate;
+    /// <summary>After 450 ms of silence the audio so far is offered for early recognition.</summary>
+    private const int PauseSignalFrames = 15;
+    /// <summary>After "Ведар, …" a shorter pause is enough: the "still talking" check covers longer pauses.</summary>
+    private const int MaxWakeWordPauseMs = 1000;
     private readonly IAudioInput _input;
     private readonly ISettingsStore _settings;
     private readonly ILogger<VoiceListener> _logger;
@@ -64,7 +68,61 @@ public sealed class VoiceListener : IVoiceListener
     public event EventHandler<UtteranceEventArgs>? UtteranceCaptured;
     public event EventHandler<UtteranceEventArgs>? BargeInCaptured;
     public event EventHandler? BargeInSpeechStarted;
+    public event EventHandler<UtteranceEventArgs>? SpeechPaused;
+    public event EventHandler? SpeechResumed;
     private bool _bargeContinuation;
+    private bool _pauseSignalled;
+    private int _commitAtFrames;
+    private int _listeningWindowSeconds;
+
+    public int ListeningWindowSeconds
+    {
+        get { lock (_gate) { return _listeningWindowSeconds; } }
+        set { lock (_gate) { _listeningWindowSeconds = Math.Max(0, value); } }
+    }
+
+    public void CommitAtSilence(int silenceMs)
+    {
+        float[]? completed = null;
+        ListeningMode mode;
+        lock (_gate)
+        {
+            mode = _mode;
+            if (_mode != ListeningMode.Command || _suppressed || !_vad.InSpeech || _utterance.Count == 0)
+            {
+                return;
+            }
+
+            var frames = Math.Max(1, silenceMs / FrameMs);
+            if (_vad.SilenceFrames >= frames)
+            {
+                completed = TakeUtterance();
+            }
+            else
+            {
+                _commitAtFrames = frames;
+            }
+        }
+
+        if (completed is not null)
+        {
+            UtteranceCaptured?.Invoke(this, new UtteranceEventArgs(completed, mode, endedBySilence: true));
+        }
+    }
+
+    private const int FrameMs = 1000 * EnergyVoiceActivityDetector.FrameSamples / AudioFrameEventArgs.SampleRate;
+
+    /// <summary>Ends the utterance now (under the lock).</summary>
+    private float[] TakeUtterance()
+    {
+        var samples = _utterance.ToArray();
+        _utterance.Clear();
+        _vad.Reset();
+        _pauseSignalled = false;
+        _commitAtFrames = 0;
+        StopCommandTimer();
+        return samples;
+    }
 
     public bool BargeInContinuation
     {
@@ -139,7 +197,7 @@ public sealed class VoiceListener : IVoiceListener
 
             if (mode == ListeningMode.Command)
             {
-                StartCommandTimer(settings.Activation.CommandListenTimeoutSeconds);
+                StartCommandTimer(WindowSeconds());
             }
         }
         finally
@@ -207,12 +265,18 @@ public sealed class VoiceListener : IVoiceListener
     {
         var s = _settings.Current;
         _vad.Sensitivity = s.Microphone.Sensitivity;
-        // The same generous pause for "Ведар, …" and for answers: people stop to think in the middle of a sentence.
-        _vad.HangoverFrames = PauseFrames();
+        // In command mode this is the longest pause: a complete sentence is answered earlier (CommitAtSilence).
+        // After the wake word a shorter pause is used; the orchestrator's "still talking" check covers longer ones.
+        _vad.HangoverFrames = mode == ListeningMode.WakeWord
+            ? Math.Max(10, Math.Min(s.Activation.EndOfSpeechPauseMs, MaxWakeWordPauseMs) / FrameMs)
+            : PauseFrames();
+        _pauseSignalled = false;
+        _commitAtFrames = 0;
     }
 
-    private int PauseFrames() =>
-        Math.Max(10, _settings.Current.Activation.EndOfSpeechPauseMs / (1000 * EnergyVoiceActivityDetector.FrameSamples / AudioFrameEventArgs.SampleRate));
+    private int PauseFrames() => Math.Max(10, _settings.Current.Activation.EndOfSpeechPauseMs / FrameMs);
+
+    private int WindowSeconds() => _listeningWindowSeconds > 0 ? _listeningWindowSeconds : _settings.Current.Activation.CommandListenTimeoutSeconds;
 
     private int MaxUtteranceSamples()
     {
@@ -225,6 +289,8 @@ public sealed class VoiceListener : IVoiceListener
     {
         float[]? completed = null;
         float[]? bargeIn = null;
+        float[]? paused = null;
+        bool resumed = false;
         bool started = false;
         bool bargeStarted = false;
         ListeningMode mode;
@@ -258,7 +324,7 @@ public sealed class VoiceListener : IVoiceListener
             }
             else
             {
-                Detect(samples, ref started, ref completed);
+                Detect(samples, mode, ref started, ref completed, ref paused, ref resumed);
             }
 
             if (started && mode == ListeningMode.Command)
@@ -282,6 +348,16 @@ public sealed class VoiceListener : IVoiceListener
             SpeechStarted?.Invoke(this, EventArgs.Empty);
         }
 
+        if (resumed)
+        {
+            SpeechResumed?.Invoke(this, EventArgs.Empty);
+        }
+
+        if (paused is not null && completed is null)
+        {
+            SpeechPaused?.Invoke(this, new UtteranceEventArgs(paused, mode, endedBySilence: false));
+        }
+
         if (completed is not null)
         {
             var speechSeconds = completed.Length / (double)AudioFrameEventArgs.SampleRate;
@@ -290,7 +366,7 @@ public sealed class VoiceListener : IVoiceListener
                 _logger.LogDebug("Discarded {Ms} ms blip.", (int)(speechSeconds * 1000));
                 if (mode == ListeningMode.Command)
                 {
-                    StartCommandTimer(_settings.Current.Activation.CommandListenTimeoutSeconds);
+                    StartCommandTimer(WindowSeconds());
                 }
 
                 return;
@@ -357,10 +433,12 @@ public sealed class VoiceListener : IVoiceListener
     }
 
     /// <summary>Normal utterance detection. Called under the lock.</summary>
-    private void Detect(float[] samples, ref bool startedOut, ref float[]? completedOut)
+    private void Detect(float[] samples, ListeningMode mode, ref bool startedOut, ref float[]? completedOut, ref float[]? pausedOut, ref bool resumedOut)
     {
         bool started = false;
+        bool resumed = false;
         float[]? completed = null;
+        float[]? paused = null;
         var max = MaxUtteranceSamples();
         _vad.Process(samples, (evt, frame) =>
         {
@@ -368,6 +446,8 @@ public sealed class VoiceListener : IVoiceListener
             {
                 case VadEvent.SpeechStart:
                     started = true;
+                    _pauseSignalled = false;
+                    _commitAtFrames = 0;
                     foreach (var pre in _preRoll)
                     {
                         _utterance.AddRange(pre);
@@ -380,6 +460,8 @@ public sealed class VoiceListener : IVoiceListener
                     _utterance.AddRange(frame);
                     completed = _utterance.ToArray();
                     _utterance.Clear();
+                    _pauseSignalled = false;
+                    _commitAtFrames = 0;
                     break;
                 default:
                     if (_vad.InSpeech)
@@ -390,6 +472,34 @@ public sealed class VoiceListener : IVoiceListener
                             completed = _utterance.ToArray();
                             _utterance.Clear();
                             _vad.Reset();
+                            _pauseSignalled = false;
+                            _commitAtFrames = 0;
+                            break;
+                        }
+
+                        if (mode != ListeningMode.Command)
+                        {
+                            break;
+                        }
+
+                        var silence = _vad.SilenceFrames;
+                        if (silence == 0 && _pauseSignalled)
+                        {
+                            // The user went on speaking: the early recognition is outdated, and so is a planned commit.
+                            _pauseSignalled = false;
+                            _commitAtFrames = 0;
+                            resumed = true;
+                            paused = null;
+                        }
+                        else if (silence == PauseSignalFrames && !_pauseSignalled)
+                        {
+                            _pauseSignalled = true;
+                            paused = _utterance.ToArray();
+                        }
+
+                        if (_commitAtFrames > 0 && silence >= _commitAtFrames)
+                        {
+                            completed = TakeUtterance();
                         }
                     }
                     else
@@ -407,6 +517,8 @@ public sealed class VoiceListener : IVoiceListener
 
         startedOut = started;
         completedOut = completed;
+        pausedOut = paused;
+        resumedOut = resumed;
     }
 
     private void ResetUtterance()
@@ -414,6 +526,8 @@ public sealed class VoiceListener : IVoiceListener
         _utterance.Clear();
         _preRoll.Clear();
         _vad.Reset();
+        _pauseSignalled = false;
+        _commitAtFrames = 0;
         _bargeUtterance.Clear();
         _bargeVad.Reset();
     }

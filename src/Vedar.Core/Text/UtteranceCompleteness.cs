@@ -18,9 +18,24 @@ public static class UtteranceCompleteness
         "ами", "ъъ", "ъ", "ъм", "мм", "ммм", "ее", "еее", "хм", "абе", "значи", "тоест", "демек",
     };
 
+    /// <summary>What people say before the actual request ("Искам да те питам…", "Кажи ми…").</summary>
+    private static readonly HashSet<string> Openers = new(StringComparer.Ordinal)
+    {
+        "искам да", "искам да те питам", "искам да питам", "искам да знам", "искам да говорим", "искам да поговорим",
+        "искам да си поговорим", "да си поговорим", "кажи ми", "разкажи ми", "обясни ми", "имам въпрос", "имам един въпрос",
+        "въпросът ми е", "чудя се", "интересува ме", "слушай", "виж", "виж сега", "знаеш ли", "може ли", "можеш ли",
+        "да те питам", "един въпрос", "питам се",
+    };
+
     public static bool LooksUnfinished(string? text)
     {
         var tokens = BulgarianText.Tokenize(text);
         return tokens.Length > 0 && NotLastWords.Contains(tokens[^1]);
     }
+
+    /// <summary>
+    /// Only an opener so far ("Искам да те питам.", "Кажи ми."): complete as a sentence, but the request usually
+    /// follows, so VEDAR does not answer early.
+    /// </summary>
+    public static bool LooksLikeOpener(string? text) => Openers.Contains(BulgarianText.NormalizeForMatching(text));
 }

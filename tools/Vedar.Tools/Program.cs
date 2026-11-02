@@ -25,7 +25,8 @@ if (args.Length == 0)
           prepare-piper <voice.onnx> <outDir>          Add sherpa-onnx metadata (copy) + tokens.txt
           synthesize "<text>" <out.wav> [rate]         Piper TTS to WAV (rate 0.5–2.0)
           transcribe <in.wav> [model]                  Whisper STT
-          bench-commands [prompt=wake|vocab|none] [threads]   Piper → Whisper → intent round trip (synthetic voice)
+          bench-commands [prompt=wake|vocab|none] [threads] [ctx] [set=commands|social|all]   Piper → Whisper → intent round trip (synthetic voice)
+          hear "<phrase>" ["<phrase>" …]               What the wake scan and the main model hear for each phrase (Piper voice)
           bench-wake <fleurs-wav-dir> [limit] [wakeModel] [ctx]   False wake-word activations on real speech without "Ведар"
           bench-wakedetect [wakeModel] [ctx]           Wake-word detection rate on synthetic commands (with 300 ms pre-roll)
           bench-vad [minutes]                          CPU cost of continuous listening (VAD only)
@@ -160,6 +161,35 @@ switch (args[0])
         return status.IsAvailable ? 0 : 2;
     }
 
+    case "hear":
+    {
+        using var tts = await CreateTtsAsync();
+        using var stt = new WhisperSpeechRecognizer(settings, resolve, NullLogger<WhisperSpeechRecognizer>.Instance);
+        await stt.InitializeAsync(CancellationToken.None);
+        var wake = new WakeWordMatcher();
+        var intents = new CommandDispatcher(settings, new NoActions(), new NoUi(), new NoAi(), new NoHistory(), Localizer.Load("bg"),
+            NullLogger<CommandDispatcher>.Instance, isWakeToken: wake.IsWakeToken).Recognizer;
+        foreach (var phrase in args.Skip(1))
+        {
+            var audio = new List<float>();
+            await foreach (var chunk in tts.SynthesizeAsync(phrase, new SynthesisOptions(), CancellationToken.None))
+            {
+                audio.AddRange(chunk.Samples);
+            }
+
+            var samples = new float[4800].Concat(StreamingResampler.Resample(audio.ToArray(), tts.SampleRate, 16000)).ToArray();
+            var w = await stt.RecognizeAsync(samples, new RecognitionRequest(RecognitionPurpose.WakeWord, RecognitionPrompts.WakeWord), CancellationToken.None);
+            var f = await stt.RecognizeAsync(samples, new RecognitionRequest(RecognitionPurpose.Command, RecognitionPrompts.Commands), CancellationToken.None);
+            var m = wake.Match(w.Text);
+            var fm = wake.Match(f.Text);
+            var request = fm.IsMatch ? fm.Request : f.Text;
+            Console.WriteLine($"{phrase} | wake scan: '{w.Text}' ({(m.IsMatch ? "wake, request '" + m.Request + "'" : "no wake")}, {w.ProcessingTime.TotalMilliseconds:F0} ms) " +
+                              $"| main: '{f.Text}' ({f.ProcessingTime.TotalMilliseconds:F0} ms) → {intents.Recognize(request)?.IntentId ?? "-"}");
+        }
+
+        return 0;
+    }
+
     case "transcribe":
     {
         if (args.Length > 2)
@@ -184,14 +214,30 @@ switch (args[0])
             settings.Current.Recognition.Threads = int.Parse(args[2], CultureInfo.InvariantCulture);
         }
 
-        string? prompt = promptMode switch { "none" => null, "wake" => "Ведар", _ => RecognitionPrompts.Commands };
+        string? prompt = promptMode switch
+        {
+            "none" => null,
+            "wake" => "Ведар",
+            "social" => RecognitionPrompts.Commands + " Здравей, Ведар, как си, добро утро, добър вечер, лека нощ, благодаря, довиждане.",
+            _ => RecognitionPrompts.Commands,
+        };
         using var tts = await CreateTtsAsync();
         using var stt = new WhisperSpeechRecognizer(settings, resolve, NullLogger<WhisperSpeechRecognizer>.Instance);
+        if (args.Length > 3)
+        {
+            stt.CommandAudioContext = int.Parse(args[3], CultureInfo.InvariantCulture); // 0 = adaptive
+        }
+
         await stt.InitializeAsync(CancellationToken.None);
         var wake = new WakeWordMatcher();
         var dispatcher = new CommandDispatcher(settings, new NoActions(), new NoUi(), new NoAi(), new NoHistory(), Localizer.Load("bg"),
             NullLogger<CommandDispatcher>.Instance, isWakeToken: wake.IsWakeToken);
-        var cases = BenchmarkData.Commands;
+        var cases = (args.Length > 4 ? args[4] : "commands") switch
+        {
+            "social" => BenchmarkData.SmallTalk,
+            "all" => [.. BenchmarkData.Commands, .. BenchmarkData.SmallTalk],
+            _ => BenchmarkData.Commands,
+        };
         int wakeOk = 0, intentOk = 0, total = 0;
         double wakeMs = 0, fullMs = 0;
         foreach (var rate in new[] { 0.9f, 1.0f, 1.15f })
@@ -208,7 +254,7 @@ switch (args[0])
                 var w = await stt.RecognizeAsync(samples, new RecognitionRequest(RecognitionPurpose.WakeWord, "Ведар"), CancellationToken.None);
                 var f = await stt.RecognizeAsync(samples, new RecognitionRequest(RecognitionPurpose.Command, prompt), CancellationToken.None);
                 var m = wake.Match(f.Text);
-                var got = dispatcher.Recognizer.Recognize(m.IsMatch ? m.Command : f.Text)?.IntentId ?? "-";
+                var got = dispatcher.Recognizer.Recognize(m.IsMatch ? m.Request : f.Text)?.IntentId ?? "-";
                 var wakeHit = wake.Match(w.Text).IsMatch;
                 var ok = got == intent || (intent.StartsWith("startConversation") && got.StartsWith("startConversation"));
                 wakeOk += wakeHit ? 1 : 0;
@@ -220,7 +266,7 @@ switch (args[0])
             }
         }
 
-        Console.WriteLine($"\nprompt={promptMode} threads={WhisperSpeechRecognizer.DefaultThreads()}/{settings.Current.Recognition.Threads} " +
+        Console.WriteLine($"\nprompt={promptMode} ctx={stt.CommandAudioContext} threads={WhisperSpeechRecognizer.DefaultThreads()}/{settings.Current.Recognition.Threads} " +
                           $"wake-word detected {wakeOk}/{total} ({100.0 * wakeOk / total:F0}%), intent correct {intentOk}/{total} ({100.0 * intentOk / total:F0}%), " +
                           $"avg wake scan {wakeMs / total:F0} ms, avg command recognition {fullMs / total:F0} ms");
         return 0;
@@ -349,6 +395,19 @@ internal static class BenchmarkData
         ("Ведар, затвори разговора.", "endConversation"),
         ("Ведар, отвори настройките.", "openSettings"),
         ("Ведар, помощ.", "help"),
+    ];
+
+    /// <summary>Greetings and the like, with the name before or after.</summary>
+    public static readonly (string Spoken, string Intent)[] SmallTalk =
+    [
+        ("Здравей, Ведар!", "greeting"),
+        ("Добро утро, Ведар.", "greeting"),
+        ("Добър вечер, Ведар.", "greeting"),
+        ("Ведар, как си?", "howAreYou"),
+        ("Как си, Ведар?", "howAreYou"),
+        ("Благодаря, Ведар.", "thanks"),
+        ("Довиждане, Ведар.", "farewell"),
+        ("Лека нощ, Ведар.", "farewell"),
     ];
 }
 

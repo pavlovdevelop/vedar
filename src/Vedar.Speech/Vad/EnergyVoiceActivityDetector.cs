@@ -31,6 +31,8 @@ public sealed class EnergyVoiceActivityDetector
     public int StartFrames { get; set; } = 4;              // 120 ms of speech to start
     public int HangoverFrames { get; set; } = 27;          // ~800 ms of silence to end
     public float NoiseFloorDb => _noiseDb;
+    /// <summary>Consecutive silent frames while <see cref="InSpeech"/> (the current pause).</summary>
+    public int SilenceFrames => InSpeech ? _silenceFrames : 0;
     public float LastFrameDb { get; private set; } = -100f;
 
     /// <summary>Margin above the noise floor needed to count as speech.</summary>

@@ -185,6 +185,79 @@ public class VoiceListenerTests
     }
 
     [Fact]
+    public async Task A_short_pause_offers_the_audio_so_far_and_going_on_is_reported()
+    {
+        var (listener, input, _) = Create();
+        var paused = new List<UtteranceEventArgs>();
+        var resumed = 0;
+        var captured = new List<UtteranceEventArgs>();
+        listener.SpeechPaused += (_, e) => paused.Add(e);
+        listener.SpeechResumed += (_, _) => resumed++;
+        listener.UtteranceCaptured += (_, e) => captured.Add(e);
+        await listener.SetModeAsync(ListeningMode.Command, CancellationToken.None);
+
+        // "Разкажи ми за" … 0.8 s … "Васил Левски" … the end.
+        await input.FeedAsync(Signals.Concat(Signals.Noise(0.6, 0.002f), Signals.Speechlike(1.2), Signals.Noise(0.8, 0.002f), Signals.Speechlike(1.0), Signals.Noise(2.0, 0.002f)));
+        Assert.Equal(2, paused.Count); // after each part
+        Assert.InRange(paused[0].Duration.TotalSeconds, 1.2, 2.2);
+        Assert.Equal(1, resumed);
+        var u = Assert.Single(captured); // still one sentence
+        Assert.True(u.Duration.TotalSeconds > paused[1].Duration.TotalSeconds);
+    }
+
+    [Fact]
+    public async Task Commit_at_silence_ends_a_complete_sentence_after_a_shorter_pause()
+    {
+        var (listener, input, _) = Create();
+        var captured = new List<UtteranceEventArgs>();
+        listener.UtteranceCaptured += (_, e) => captured.Add(e);
+        listener.SpeechPaused += (_, _) => listener.CommitAtSilence(800); // "Колко е часът?" was recognized as complete
+        await listener.SetModeAsync(ListeningMode.Command, CancellationToken.None);
+
+        await input.FeedAsync(Signals.Concat(Signals.Noise(0.6, 0.002f), Signals.Speechlike(1.2), Signals.Noise(0.9, 0.002f)));
+        var u = Assert.Single(captured); // 0.9 s of silence was enough (the full pause is 1.4 s)
+        Assert.InRange(u.Duration.TotalSeconds, 1.9, 2.5);
+    }
+
+    [Fact]
+    public async Task A_planned_early_end_is_dropped_when_the_user_goes_on()
+    {
+        var (listener, input, _) = Create();
+        var captured = new List<UtteranceEventArgs>();
+        listener.UtteranceCaptured += (_, e) => captured.Add(e);
+        listener.SpeechPaused += (_, _) => listener.CommitAtSilence(800);
+        await listener.SetModeAsync(ListeningMode.Command, CancellationToken.None);
+
+        await input.FeedAsync(Signals.Concat(Signals.Noise(0.6, 0.002f), Signals.Speechlike(1.2), Signals.Noise(0.6, 0.002f), Signals.Speechlike(1.2), Signals.Noise(2.0, 0.002f)));
+        var u = Assert.Single(captured);
+        Assert.True(u.Duration.TotalSeconds > 3.0, $"{u.Duration.TotalSeconds:F2} s"); // both parts, one sentence
+    }
+
+    [Fact]
+    public async Task No_pause_signals_while_scanning_for_the_wake_word()
+    {
+        var (listener, input, _) = Create();
+        var paused = 0;
+        listener.SpeechPaused += (_, _) => paused++;
+        await listener.SetModeAsync(ListeningMode.WakeWord, CancellationToken.None);
+        await input.FeedAsync(Utterance());
+        Assert.Equal(0, paused);
+    }
+
+    [Fact]
+    public async Task The_listening_window_can_be_longer_than_the_command_timeout()
+    {
+        var (listener, _, _) = Create(s => s.Activation.CommandListenTimeoutSeconds = 3);
+        var timedOut = new TaskCompletionSource();
+        listener.CommandTimeout += (_, _) => timedOut.TrySetResult();
+        listener.ListeningWindowSeconds = 5; // listening quietly after an answer
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await listener.SetModeAsync(ListeningMode.Command, CancellationToken.None);
+        await timedOut.Task.WaitAsync(TimeSpan.FromSeconds(9));
+        Assert.InRange(sw.Elapsed.TotalSeconds, 4.5, 8.0);
+    }
+
+    [Fact]
     public async Task Continuation_pieces_include_the_beginning_and_end_after_the_normal_pause()
     {
         var (listener, input, _) = Create();

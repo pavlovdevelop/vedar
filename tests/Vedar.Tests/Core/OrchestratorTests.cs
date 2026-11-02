@@ -28,6 +28,8 @@ public sealed class OrchestratorHarness : IAsyncDisposable
     public FakeHistoryStore History { get; } = new();
     public Vedar.Infrastructure.Security.InMemorySecretStore Secrets { get; } = new();
     public FakeAutoStart AutoStart { get; } = new();
+    public FakeUserActivity Activity { get; } = new();
+    public FixedClock Clock { get; }
     public AssistantOrchestrator Orchestrator { get; }
     public List<TranscriptEntry> Transcript { get; } = [];
 
@@ -40,11 +42,12 @@ public sealed class OrchestratorHarness : IAsyncDisposable
         configure?.Invoke(settings);
         Settings = new TestSettingsStore(settings);
         var loc = Localizer.Load("bg", new Random(7));
-        var clock = new FixedClock(new DateTimeOffset(2026, 11, 1, 14, 35, 0, TimeSpan.FromHours(2)));
+        var clock = Clock = new FixedClock(new DateTimeOffset(2026, 11, 1, 14, 35, 0, TimeSpan.FromHours(2)));
         var wake = new WakeWordMatcher();
-        var dispatcher = new CommandDispatcher(Settings, System, Ui, Ai, History, loc, Log.Null<CommandDispatcher>(), clock, wake.IsWakeToken);
+        var smallTalk = new Vedar.Core.Conversation.SmallTalk(loc, clock);
+        var dispatcher = new CommandDispatcher(Settings, System, Ui, Ai, History, loc, Log.Null<CommandDispatcher>(), clock, wake.IsWakeToken, smallTalk);
         Orchestrator = new AssistantOrchestrator(Log.Null<AssistantOrchestrator>(), Settings, Listener, Recognizer, wake, Synth, Output, dispatcher, Ai, loc, clock, History,
-            ui: Ui, secrets: Secrets, autoStart: AutoStart);
+            ui: Ui, secrets: Secrets, autoStart: AutoStart, activity: Activity, smallTalk: smallTalk);
         Orchestrator.TranscriptAdded += (_, e) => { lock (Transcript) { Transcript.Add(e); } };
     }
 
@@ -68,14 +71,23 @@ public sealed class OrchestratorHarness : IAsyncDisposable
 public class OrchestratorTests
 {
     [Fact]
-    public async Task Greets_user_by_name_on_startup_and_starts_hands_free_listening()
+    public async Task Greets_user_by_name_on_startup_then_waits_for_an_answer_quietly_and_returns_to_hands_free()
     {
         await using var h = new OrchestratorHarness(s => { s.General.GreetOnStartup = true; s.General.UserName = "Стевко"; });
         await h.StartAsync();
-        Assert.Contains("Стевко", h.Spoken);
-        Assert.Equal(AssistantState.Idle, h.Orchestrator.State);
-        Assert.Equal(ListeningMode.WakeWord, h.Listener.Mode);
+        Assert.StartsWith("Добър ден, Стевко!", h.Spoken); // 14:35
+        // Like a person who has just said hello: it listens for the answer, without "Ведар" and without a beep.
+        Assert.Equal(AssistantState.Listening, h.Orchestrator.State);
+        Assert.Equal(ListeningMode.Command, h.Listener.Mode);
+        Assert.False(h.Listener.Suppressed);
+        Assert.Equal(ActivationSettings.DefaultFollowUpSeconds, h.Listener.ListeningWindowSeconds);
         Assert.Equal(MicrophoneStatus.Active, h.Orchestrator.MicrophoneStatus);
+
+        var spoken = h.Synth.Spoken.Count;
+        h.Listener.RaiseTimeout(); // nobody answered
+        await Wait.UntilAsync(() => h.Listener.Mode == ListeningMode.WakeWord && h.Orchestrator.State == AssistantState.Idle);
+        Assert.Equal(spoken, h.Synth.Spoken.Count);
+        Assert.DoesNotContain(h.Output.Played.ToList(), p => p.SampleRate == Earcons.SampleRate); // no beeps
     }
 
     [Fact]
@@ -91,8 +103,9 @@ public class OrchestratorTests
         await Wait.UntilAsync(() => h.Spoken.Contains("четиринадесет и тридесет и пет минути"));
         await h.IdleAsync();
 
-        Assert.Equal(AssistantState.Idle, h.Orchestrator.State);
-        Assert.Equal(ListeningMode.WakeWord, h.Listener.Mode);
+        // After the answer VEDAR keeps listening for a follow-up without the wake word.
+        Assert.Equal(AssistantState.Listening, h.Orchestrator.State);
+        Assert.Equal(ListeningMode.Command, h.Listener.Mode);
         Assert.Contains(h.Transcript, t => t.Speaker == Speaker.User && t.Text == "Колко е часът?");
     }
 
@@ -387,7 +400,7 @@ public class OrchestratorTests
         await h.IdleAsync();
         Assert.Contains("Няма връзка с интернет", h.Spoken);
         Assert.Equal(0, h.Orchestrator.Conversation.Count);
-        Assert.Equal(AssistantState.Idle, h.Orchestrator.State);
+        Assert.Equal(AssistantState.Listening, h.Orchestrator.State); // waits quietly in case the user answers
 
         h.Ai.Reply("Ето един виц.");
         await h.Orchestrator.SubmitTextAsync("Разкажи ми виц.");
@@ -512,7 +525,7 @@ public class OrchestratorTests
         await Wait.UntilAsync(() => h.Spoken.Contains("Възникна грешка"));
         await h.IdleAsync();
         Assert.Contains(AssistantState.Error, states);
-        Assert.Equal(AssistantState.Idle, h.Orchestrator.State);
+        Assert.Equal(AssistantState.Listening, h.Orchestrator.State); // ready again, listening quietly
 
         h.Recognizer.Enqueue("колко е часът");
         h.Orchestrator.PushToTalk();

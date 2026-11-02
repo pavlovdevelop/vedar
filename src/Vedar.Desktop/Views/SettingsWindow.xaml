@@ -108,8 +108,9 @@
                                 AutomationProperties.Name="{l:Loc settings.endPause}" AutomationProperties.HelpText="{l:Loc settings.endPause.help}"/>
                         <TextBlock Text="{l:Loc settings.endPause.help}" Style="{StaticResource Vedar.Muted}" TextWrapping="Wrap"/>
                         <Label Content="{l:Loc settings.followUp}" Target="{Binding ElementName=FollowUpSlider}"/>
-                        <Slider x:Name="FollowUpSlider" Minimum="0" Maximum="30" TickFrequency="1" SmallChange="1" LargeChange="5" Value="{Binding FollowUpSeconds}"
-                                AutomationProperties.Name="{l:Loc settings.followUp}"/>
+                        <Slider x:Name="FollowUpSlider" Minimum="0" Maximum="120" TickFrequency="5" SmallChange="5" LargeChange="10" IsSnapToTickEnabled="True"
+                                Value="{Binding FollowUpSeconds}" AutomationProperties.Name="{l:Loc settings.followUp}" AutomationProperties.HelpText="{l:Loc settings.followUp.help}"/>
+                        <TextBlock Text="{l:Loc settings.followUp.help}" Style="{StaticResource Vedar.Muted}" TextWrapping="Wrap"/>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

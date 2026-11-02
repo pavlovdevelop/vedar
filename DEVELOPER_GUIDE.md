@@ -95,6 +95,8 @@ dotnet tests/Vedar.Tests/bin/Release/net10.0/Vedar.Tests.dll -method "*Whisper*"
 
 ```bash
 dotnet run --project tools/Vedar.Tools -c Release -- bench-commands vocab
+dotnet run --project tools/Vedar.Tools -c Release -- bench-commands vocab 0 768 social   # поздрави с името
+dotnet run --project tools/Vedar.Tools -c Release -- hear "Здравей, Ведар!" "Как си, Ведар?" # какво чуват двата модела
 dotnet run --project tools/Vedar.Tools -c Release -- bench-wakedetect ggml-base-q5_1.bin 768
 dotnet run --project tools/Vedar.Tools -c Release -- bench-wake <папка с WAV>
 dotnet run --project tools/Vedar.Tools -c Release -- bench-rate 5

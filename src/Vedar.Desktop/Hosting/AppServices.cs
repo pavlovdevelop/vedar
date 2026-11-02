@@ -5,7 +5,9 @@ using Vedar.AI.Providers;
 using Vedar.Audio.Windows;
 using Vedar.Commands;
 using Vedar.Commands.Actions;
+using Vedar.Desktop.Input;
 using Vedar.Core.Abstractions;
+using Vedar.Core.Conversation;
 using Vedar.Core.Localization;
 using Vedar.Core.Orchestration;
 using Vedar.Infrastructure.Configuration;
@@ -84,9 +86,10 @@ public sealed class AppServices : IAsyncDisposable
         var ai = new AiRouter(settings, bggpt, ollama, factory.CreateLogger<AiRouter>(), groq);
 
         var system = new WindowsSystemActions(new WindowsSystemVolume(), factory.CreateLogger<WindowsSystemActions>());
-        var commands = new CommandDispatcher(settings, system, uiHost, ai, history, loc, factory.CreateLogger<CommandDispatcher>(), isWakeToken: wake.IsWakeToken);
+        var smallTalk = new SmallTalk(loc); // shared, so the dispatcher knows when VEDAR has just greeted
+        var commands = new CommandDispatcher(settings, system, uiHost, ai, history, loc, factory.CreateLogger<CommandDispatcher>(), isWakeToken: wake.IsWakeToken, smallTalk: smallTalk);
         var orchestrator = new AssistantOrchestrator(factory.CreateLogger<AssistantOrchestrator>(), settings, listener, recognizer, wake, synthesizer, output, commands, ai, loc,
-            history: history, ui: uiHost, secrets: secrets, autoStart: autoStart);
+            history: history, ui: uiHost, secrets: secrets, autoStart: autoStart, activity: new UserActivityMonitor(), smallTalk: smallTalk);
         var downloader = new ModelDownloader(http, factory.CreateLogger<ModelDownloader>());
         var eraser = new UserDataEraser(paths, secrets, autoStart, history, factory.CreateLogger<UserDataEraser>());
 

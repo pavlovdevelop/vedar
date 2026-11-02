@@ -177,9 +177,9 @@ public class LocalizerTests
     public void Pick_returns_one_of_the_variants_and_formats()
     {
         var loc = Localizer.Load("bg", new Random(1));
-        var text = loc.Pick("speech.greeting.named", "Стевко");
-        Assert.Contains("Стевко", text);
-        Assert.Contains(text, loc.Variants("speech.greeting.named").Select(v => string.Format(v, "Стевко")));
+        var text = loc.Pick("speech.greeting.named", "Добър ден", "Стевко");
+        Assert.StartsWith("Добър ден, Стевко!", text);
+        Assert.Contains(text, loc.Variants("speech.greeting.named").Select(v => string.Format(v, "Добър ден", "Стевко")));
     }
 
     [Fact]
