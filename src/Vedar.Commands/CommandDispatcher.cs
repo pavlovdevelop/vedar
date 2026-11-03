@@ -34,12 +34,6 @@ public sealed class CommandDispatcher : ICommandDispatcher
     private readonly IntentRecognizer _recognizer;
     private readonly SmallTalk _smallTalk;
 
-    /// <summary>Intents that are usually followed by more words ("Здравей, …", "Добре, …", "Искам да поговорим за …").</summary>
-    private static readonly HashSet<string> OftenContinued = new(StringComparer.Ordinal)
-    {
-        "greeting", "ack", "startConversation", "startConversation.chatgpt", "openWebsite",
-    };
-
     public CommandDispatcher(
         ISettingsStore settings,
         ISystemActions system,
@@ -65,9 +59,6 @@ public sealed class CommandDispatcher : ICommandDispatcher
     }
 
     public IntentRecognizer Recognizer => _recognizer;
-
-    public bool IsCompleteCommand(string text) =>
-        _recognizer.Recognize(text) is { } match && !OftenContinued.Contains(match.IntentId);
 
     public string? FindIntent(string text) => _recognizer.Recognize(text)?.IntentId;
 

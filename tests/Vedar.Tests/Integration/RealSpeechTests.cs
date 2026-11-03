@@ -212,6 +212,58 @@ public class RealSpeechTests(RealSpeechFixture fx, ITestOutputHelper output) : I
     }
 
     [Fact]
+    public async Task A_person_speaking_over_VEDARs_voice_is_noticed_captured_and_understood()
+    {
+        SkipIfNoModels();
+        // VEDAR's real voice (Piper) through the loudspeakers (−12 dB, 120 ms, a reflection) and a real person
+        // (FLEURS) closer to the microphone who starts to speak in the middle of VEDAR's answer.
+        var played = StreamingResampler.Resample(await fx.SynthesizeAsync(LongAnswer), 22050, 16000);
+        var echo = new float[played.Length + 4000];
+        for (int n = 0; n < played.Length; n++)
+        {
+            echo[n + 1920] += played[n] * 0.25f;
+            echo[n + 3520] += played[n] * 0.07f;
+        }
+
+        var person = Vedar.Audio.Dsp.WavFile.ReadMono(Path.Combine(TestModels.TestDataDir, "fleurs", "fleurs_bg_2.wav")).Samples;
+        var gain = 0.1f / Math.Max(1e-4f, AudioMath.Rms(person)); // speech at about −20 dBFS
+        const int start = 3 * 16000;
+        var mic = new float[Math.Max(echo.Length, start + person.Length) + 3 * 16000];
+        var noise = new Random(1);
+        for (int n = 0; n < mic.Length; n++)
+        {
+            mic[n] = (float)((noise.NextDouble() * 2 - 1) * 0.001) + (n < echo.Length ? echo[n] : 0) + (n >= start && n - start < person.Length ? person[n - start] * gain : 0);
+        }
+
+        var input = new Vedar.Audio.Testing.SimulatedAudioInput();
+        var store = new TestSettingsStore();
+        using var listener = new Vedar.Speech.Vad.VoiceListener(input, store, Log.Null<Vedar.Speech.Vad.VoiceListener>(), () => input.SamplesFed / 16.0);
+        double? noticedAt = null;
+        float[]? captured = null;
+        listener.UserSpeechStarted += (_, _) => noticedAt = input.SamplesFed / 16000.0;
+        listener.UserSpeechCaptured += (_, e) => captured = e.Samples;
+        await listener.SetModeAsync(ListeningMode.Command, CancellationToken.None);
+        await input.FeedAsync(new float[16000 / 2]); // a moment of quiet before VEDAR speaks
+        listener.Suppressed = true;
+        listener.BargeInEnabled = true;
+        listener.InterruptOnSpeech = true;
+        listener.NotePlayback(played.Select(x => x * 1f).ToArray(), 16000);
+        await input.FeedAsync(mic);
+
+        output.WriteLine($"Noticed at {noticedAt?.ToString("F2") ?? "never"} s (the person starts at {start / 16000.0 + 0.5:F2} s of the feed).");
+        Assert.NotNull(noticedAt);
+        Assert.InRange(noticedAt!.Value, 3.4, 4.6);
+        Assert.NotNull(captured);
+
+        var heard = await fx.Recognizer!.RecognizeAsync(captured!, new RecognitionRequest(RecognitionPurpose.Command, RecognitionPrompts.Commands), CancellationToken.None);
+        var own = Vedar.Core.Text.EchoDetector.StripLeadingEcho(heard.Text, LongAnswer);
+        const string Said = "Полицията съобщи, че тялото е стояло там около ден.";
+        var cer = TextMetrics.Cer(Said, own);
+        output.WriteLine($"Captured {captured!.Length / 16000.0:F1} s → '{heard.Text}' → without VEDAR's words: '{own}' (CER {cer:P0})");
+        Assert.True(cer < 0.5, $"CER {cer:P0}");
+    }
+
+    [Fact]
     public async Task Greetings_with_the_name_go_from_voice_to_small_talk()
     {
         SkipIfNoModels();

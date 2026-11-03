@@ -93,6 +93,9 @@
                         <CheckBox x:Name="VoiceStopBox" Content="{l:Loc settings.voiceStop}" IsChecked="{Binding VoiceStopWhileSpeaking}" AutomationProperties.Name="{l:Loc settings.voiceStop}"
                                   AutomationProperties.HelpText="{l:Loc settings.voiceStop.help}"/>
                         <TextBlock Text="{l:Loc settings.voiceStop.help}" Style="{StaticResource Vedar.Muted}" TextWrapping="Wrap"/>
+                        <CheckBox x:Name="GiveWayBox" Content="{l:Loc settings.giveWay}" IsChecked="{Binding GiveWayWhenUserSpeaks}" AutomationProperties.Name="{l:Loc settings.giveWay}"
+                                  AutomationProperties.HelpText="{l:Loc settings.giveWay.help}"/>
+                        <TextBlock Text="{l:Loc settings.giveWay.help}" Style="{StaticResource Vedar.Muted}" TextWrapping="Wrap"/>
                         <TextBlock Text="{l:Loc settings.hotkey.help}" Style="{StaticResource Vedar.Muted}"/>
                         <Label Content="{l:Loc settings.hotkey.talk}" Target="{Binding ElementName=TalkHotkeyBox}"/>
                         <c:HotkeyBox x:Name="TalkHotkeyBox" Hotkey="{Binding PushToTalkHotkey}" AutomationProperties.Name="{l:Loc settings.hotkey.talk}"
@@ -108,7 +111,7 @@
                                 AutomationProperties.Name="{l:Loc settings.endPause}" AutomationProperties.HelpText="{l:Loc settings.endPause.help}"/>
                         <TextBlock Text="{l:Loc settings.endPause.help}" Style="{StaticResource Vedar.Muted}" TextWrapping="Wrap"/>
                         <Label Content="{l:Loc settings.followUp}" Target="{Binding ElementName=FollowUpSlider}"/>
-                        <Slider x:Name="FollowUpSlider" Minimum="0" Maximum="120" TickFrequency="5" SmallChange="5" LargeChange="10" IsSnapToTickEnabled="True"
+                        <Slider x:Name="FollowUpSlider" Minimum="0" Maximum="600" TickFrequency="10" SmallChange="10" LargeChange="60" IsSnapToTickEnabled="True"
                                 Value="{Binding FollowUpSeconds}" AutomationProperties.Name="{l:Loc settings.followUp}" AutomationProperties.HelpText="{l:Loc settings.followUp.help}"/>
                         <TextBlock Text="{l:Loc settings.followUp.help}" Style="{StaticResource Vedar.Muted}" TextWrapping="Wrap"/>
                     </StackPanel>

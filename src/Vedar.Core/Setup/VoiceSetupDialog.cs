@@ -79,32 +79,6 @@ public sealed class VoiceSetupDialog
             : Ask(_loc.Get("setup.silence") + " " + CurrentQuestion());
     }
 
-    /// <summary>
-    /// The text is a complete answer to the current question ("да", "по-бързо", "готово", a name), so VEDAR may
-    /// answer after a shorter pause. "Казвам се…" is not: the name follows.
-    /// </summary>
-    public bool IsCompleteAnswer(string text)
-    {
-        var norm = BulgarianText.NormalizeForMatching(text);
-        if (norm.Length == 0)
-        {
-            return false;
-        }
-
-        if (IsQuit(norm) || IsSkip(norm))
-        {
-            return true;
-        }
-
-        return _step switch
-        {
-            Step.Name => ExtractName(text) is not null,
-            Step.ConfirmName or Step.Autostart => ConfirmationParser.Parse(text) != ConfirmationAnswer.Unknown,
-            Step.Speed => SpeedAnswer(norm) is not null,
-            _ => IsReady(norm) || ConfirmationParser.Parse(norm) == ConfirmationAnswer.No,
-        };
-    }
-
     /// <param name="userBusy">
     /// The user has used the keyboard since the question (for example to copy the key with the screen reader): an
     /// unclear answer is then probably the screen reader talking, and VEDAR keeps quiet instead of answering it.

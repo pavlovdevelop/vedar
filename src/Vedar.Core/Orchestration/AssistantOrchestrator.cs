@@ -50,8 +50,6 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     /// <summary>Without beeps, a short "Момент." after this long without an AI answer (a person would not stay silent).</summary>
     private const int ThinkingFillerDelayMs = 2500;
 
-    /// <summary>After an early commit, how long VEDAR still listens for the user going on before it answers.</summary>
-    private static readonly TimeSpan EarlyCommitWatch = TimeSpan.FromMilliseconds(300);
 
     /// <summary>
     /// Recognition during the pause only when the main model is this fast on average. whisper.cpp checks for
@@ -106,8 +104,40 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     private bool _notUnderstoodSaid;
     private Speculation? _speculation;
     private long _speechGeneration;
+    /// <summary>The user started to speak while VEDAR spoke or thought (see <see cref="OnUserSpeechStarted"/>).</summary>
+    private Interruption? _interruption;
+    /// <summary>The utterance the current turn answers (merged with the rest if the user goes on before VEDAR speaks).</summary>
+    private float[]? _lastUtterance;
+    private bool _lastUtteranceFollowUp;
+    /// <summary>VEDAR has started to answer in the current turn ("Момент." and notices do not count).</summary>
+    private bool _answerStartedInTurn;
+    private long _bargeInGeneration = -1;
+    private readonly IAudioOutput _voiceOutput;
     /// <summary>Moving average of how long the main model takes (ms; 0 = not measured yet).</summary>
     private double _recognitionMsAverage;
+
+    /// <summary>
+    /// The user started to speak while VEDAR spoke or was still working on the answer. VEDAR's voice is made quieter
+    /// at once; a quick check of the first words decides whether VEDAR stops and listens (the user speaks to it) or
+    /// carries on (a noise, its own voice).
+    /// </summary>
+    private sealed class Interruption(bool beforeSpeaking, float[]? previous, bool previousFollowUp)
+    {
+        /// <summary>VEDAR had not started to answer: the user is still finishing the sentence.</summary>
+        public bool BeforeSpeaking { get; } = beforeSpeaking;
+        public float[]? Previous { get; } = previous;
+        public bool PreviousFollowUp { get; } = previousFollowUp;
+        public TaskCompletionSource<float[]> Speech { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        /// <summary>The interrupted turn has ended and the user's speech is being listened to.</summary>
+        public volatile bool TakenOver;
+    }
+
+    /// <summary>How long the user speaks before the first words are checked (VEDAR is quieter meanwhile).</summary>
+    private const int InterruptionCheckDelayMs = 700;
+
+    /// <summary>When the user goes on after a pause, the end-of-speech pause grows by this much (up to the maximum).</summary>
+    private const int LearnedPauseStepMs = 150;
+    private const int LearnedPauseMaxMs = 2400;
     private int _aiRequestActive;
     private bool _cloudNoticeGiven;
     private readonly HashSet<string> _backupCloudNoticeGiven = new(StringComparer.Ordinal);
@@ -131,8 +161,8 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
     /// <summary>
     /// Recognition started during the user's pause, before the end of the utterance is certain. If the user does
-    /// not go on, its result is used — so the answer comes as soon as the pause is over (or earlier, see
-    /// <see cref="ShouldAnswerNow"/>), instead of only then starting to recognize.
+    /// not go on, its result is used — so the answer comes as soon as the pause is over, instead of only then
+    /// starting to recognize. (VEDAR never answers before the whole pause is over.)
     /// </summary>
     private sealed class Speculation(float[] samples, string? prompt, long generation, CancellationTokenSource cts)
     {
@@ -141,7 +171,6 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         public long Generation { get; } = generation;
         public DateTime StartedUtc { get; } = DateTime.UtcNow;
         public Task<RecognitionResult> Task { get; set; } = System.Threading.Tasks.Task.FromResult(RecognitionResult.Empty(TimeSpan.Zero, TimeSpan.Zero));
-        public volatile bool CommitRequested;
 
         public void Cancel()
         {
@@ -200,6 +229,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         _autoStart = autoStart;
         _activity = activity;
         _smallTalk = smallTalk ?? new SmallTalk(localizer, _clock);
+        _voiceOutput = new ListenerAwareOutput(output, listener);
         _keys = ui is not null && secrets is not null ? new ApiKeyPaste(ui, secrets, ai, localizer) : null;
         Conversation = new ConversationSession(settingsStore.Current.Ai.MaxHistoryMessages);
 
@@ -211,6 +241,8 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         _listener.SpeechStarted += OnSpeechStarted;
         _listener.SpeechPaused += OnSpeechPaused;
         _listener.SpeechResumed += OnSpeechResumed;
+        _listener.UserSpeechStarted += OnUserSpeechStarted;
+        _listener.UserSpeechCaptured += OnUserSpeechCaptured;
         _settingsStore.SettingsChanged += OnSettingsChanged;
         _ai.FallbackUsed += OnAiFallback;
     }
@@ -412,6 +444,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         }
 
         CancelSpeculation();
+        CancelInterruption();
         if (_pendingConfirmation is not null)
         {
             _pendingConfirmation = null;
@@ -523,6 +556,8 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             _listenAfterCancelQuietly = false;
             _spokeInTurn = false;
             _noFollowUpAfterTurn = false;
+            _answerStartedInTurn = false;
+            _lastUtterance = null;
             _turnCts?.Dispose();
             _turnCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
             token = _turnCts.Token;
@@ -591,8 +626,10 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         bool followUp;
         bool explicitListen;
         int window;
+        Interruption? interruption;
         lock (_turnGate)
         {
+            interruption = _interruption;
             if (_listenAfterCancel)
             {
                 // After "Ведар, спри" VEDAR listens quietly, as after an answer; after push-to-talk, as for a request.
@@ -640,15 +677,30 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             }
         }
 
-        DisableBargeIn();
         if (_lifetime.IsCancellationRequested)
         {
+            DisableBargeIn();
             return;
+        }
+
+        if (interruption is not null)
+        {
+            // The user started to speak over VEDAR (or VEDAR has just finished): listen to them until they are quiet.
+            interruption.TakenOver = true;
+            DisableBargeIn();
+            Duck(false);
+            if (TryRunTurn("user-speech", ct => HandleUserSpeechAsync(interruption, ct)))
+            {
+                return;
+            }
+
+            EndInterruption(interruption);
         }
 
         try
         {
-            // Small tail so the end of our own voice (room echo) is not captured as a command.
+            // Small tail so the end of our own voice (room echo) is not captured as a command. The user starting to
+            // speak right now is still noticed: barge-in stays on until listening has started.
             await Task.Delay(PostSpeechTailMs, _lifetime.Token).ConfigureAwait(false);
             lock (_turnGate)
             {
@@ -658,6 +710,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
                 }
             }
 
+            DisableBargeIn();
             if (next == ListeningMode.Command && !Settings.Microphone.Muted)
             {
                 await BeginCommandListeningAsync(explicitActivation: explicitListen, followUp: followUp, windowSeconds: window).ConfigureAwait(false);
@@ -670,10 +723,12 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
+            DisableBargeIn();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to restore listening after a turn.");
+            DisableBargeIn();
             StateMachine.TryTransition(AssistantState.Idle);
         }
     }
@@ -686,6 +741,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     private async Task InterruptAndRunCoreAsync(string name, Func<CancellationToken, Task> body)
     {
         Task previous;
+        CancelInterruption();
         lock (_turnGate)
         {
             _listenAfterCancel = false;
@@ -1030,6 +1086,8 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         NoteRecognitionTime(full);
         (samples, full) = await CompleteUtteranceAsync(samples, full, Recognize, ct).ConfigureAwait(false);
         LogRecognized("command", full);
+        _lastUtterance = samples;
+        _lastUtteranceFollowUp = false;
         var command = match.Request;
         if (!full.IsEmpty)
         {
@@ -1055,7 +1113,8 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         await HandleUserTextAsync(command, ct).ConfigureAwait(false);
     }
 
-    private async Task HandleCommandUtteranceAsync(float[] samples, bool followUp, Speculation? speculation, CancellationToken ct)
+    /// <param name="overVedar">The speech started over VEDAR's voice: its own last words may be at the start.</param>
+    private async Task HandleCommandUtteranceAsync(float[] samples, bool followUp, Speculation? speculation, CancellationToken ct, bool overVedar = false)
     {
         StateMachine.TryTransition(AssistantState.Recognizing);
         if (Settings.Voice.Earcons && !followUp)
@@ -1072,9 +1131,25 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             NoteRecognitionTime(result);
         }
 
-        var minWatch = reused && speculation!.CommitRequested ? EarlyCommitWatch : TimeSpan.Zero;
-        (samples, result) = await CompleteUtteranceAsync(samples, result, Recognize, ct, minWatch).ConfigureAwait(false);
+        (samples, result) = await CompleteUtteranceAsync(samples, result, Recognize, ct).ConfigureAwait(false);
         LogRecognized(reused ? "command (early)" : "command", result);
+        _lastUtterance = samples;
+        _lastUtteranceFollowUp = followUp;
+        if (!result.IsEmpty && NeedsSecondOpinion(result.Text, prompt) && !await FastModelAgreesAsync(samples, result.Text, ct).ConfigureAwait(false))
+        {
+            // Whisper turns a noise, a breath or the end of a word into a short "word" ("Слъпи.", "Вали.") or into
+            // one of the example commands it is primed with. The fast model, without the examples, does not hear
+            // the same: never run a command, or ask the AI, about something nobody said.
+            _logger.LogInformation("Ignored a short phrase the fast model did not hear the same way (probably a noise).");
+            result = RecognitionResult.Empty(result.AudioDuration, result.ProcessingTime);
+        }
+
+        if (overVedar && !result.IsEmpty)
+        {
+            // The first words may still be VEDAR's own (its voice was playing when the user started).
+            var own = EchoDetector.StripLeadingEcho(result.Text, _lastTurnSpeech);
+            result = string.IsNullOrWhiteSpace(own) ? RecognitionResult.Empty(result.AudioDuration, result.ProcessingTime) : result with { Text = own };
+        }
         if (result.IsEmpty && Volatile.Read(ref _setup) is { } quietSetup)
         {
             await ApplySetupReplyAsync(quietSetup.OnSilence(), ct).ConfigureAwait(false);
@@ -1160,6 +1235,71 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
     private static bool HasMeaningfulCommand(string? text) => BulgarianText.NormalizeForMatching(text).Count(char.IsLetterOrDigit) >= 2;
 
+    /// <summary>The transcript is exactly one of the example phrases in the recognition prompt ("Отвори браузъра.").</summary>
+    private bool IsPromptSentence(string text, string? prompt)
+    {
+        if (string.IsNullOrWhiteSpace(prompt))
+        {
+            return false;
+        }
+
+        var match = _wakeWord.Match(text);
+        var heard = BulgarianText.NormalizeForMatching(match.IsMatch ? match.Request : text);
+        if (heard.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (var sentence in prompt.Split(['.', '?', '!'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var m = _wakeWord.Match(sentence);
+            if (BulgarianText.NormalizeForMatching(m.IsMatch ? m.Request : sentence) == heard)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Short phrases (up to three words) and the example commands are double-checked; longer speech is not.</summary>
+    private bool NeedsSecondOpinion(string text, string? prompt)
+    {
+        var match = _wakeWord.Match(text);
+        return BulgarianText.Tokenize(match.IsMatch ? match.Request : text).Length <= 3 || IsPromptSentence(text, prompt);
+    }
+
+    /// <summary>
+    /// The fast model (without the command examples) hears about the same: real speech. Measured with the real
+    /// models: real short replies agree by 0.52–1.0, noise by 0.0–0.2.
+    /// </summary>
+    private async Task<bool> FastModelAgreesAsync(float[] samples, string heard, CancellationToken ct)
+    {
+        var check = await _recognizer.RecognizeAsync(samples, new RecognitionRequest(RecognitionPurpose.WakeWord, RecognitionPrompts.WakeWord), ct).ConfigureAwait(false);
+        LogRecognized("second opinion", check);
+        if (check.IsEmpty)
+        {
+            return false;
+        }
+
+        return Agree(heard, check.Text);
+    }
+
+    /// <summary>Two transcripts of the same audio (without the wake word) are about the same.</summary>
+    internal bool Agree(string main, string fast)
+    {
+        var m = _wakeWord.Match(main);
+        var f = _wakeWord.Match(fast);
+        var a = BulgarianText.NormalizeForMatching(m.IsMatch ? m.Request : main);
+        var b = BulgarianText.NormalizeForMatching(f.IsMatch ? f.Request : fast);
+        if (a.Length == 0)
+        {
+            return f.IsMatch || b.Length > 0; // the wake word alone: was anything said at all?
+        }
+
+        return b.Length > 0 && SpeechAgreement.Similarity(a, b) >= SpeechAgreement.Threshold;
+    }
+
     /// <param name="attentive">Heard without the wake word while VEDAR listened after speaking (may not be meant for VEDAR).</param>
     private async Task HandleUserTextAsync(string text, CancellationToken ct, bool fromUi = false, bool attentive = false)
     {
@@ -1190,6 +1330,10 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             case CommandOutcome.Handled when result.CommandId == SmallTalk.AckCommandId && InConversation:
                 // "Добре." in a conversation answers what the AI just asked.
                 await HandleUnknownTextAsync(text, ct, attentive).ConfigureAwait(false);
+                break;
+            case CommandOutcome.Handled when result.CommandId == SmallTalk.AckCommandId:
+                // "Добре." / "Ясно." — nothing to say, but VEDAR keeps listening, like a person who nods.
+                SetFollowUp();
                 break;
             case CommandOutcome.Handled:
             case CommandOutcome.Failed:
@@ -1263,7 +1407,8 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         switch (result.Directive)
         {
             case AssistantDirective.Stop:
-                _nextListeningMode = null;
+                // "Спри" while VEDAR is quiet: nothing to stop; keep listening, quietly.
+                SetFollowUp();
                 return;
             case AssistantDirective.Repeat:
                 await SpeakAsync(LastSpokenText ?? _loc.Get("speech.repeatNothing"), ct, remember: false).ConfigureAwait(false);
@@ -1508,7 +1653,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             _history?.Append(Conversation.Id, ChatMessage.User(text));
             var messages = Conversation.BuildRequest(SystemPromptBuilder.Build(provider, Settings.General.UserName, _clock.Now));
             var chunker = new StreamingSentenceChunker();
-            queue = new SpeechPlaybackQueue(_synthesizer, _output, new SynthesisOptions(Settings.Voice.Rate), OnSpeakingStarted, _logger, ct, OnSentencePlaying);
+            queue = new SpeechPlaybackQueue(_synthesizer, _voiceOutput, new SynthesisOptions(Settings.Voice.Rate), OnSpeakingStarted, _logger, ct, OnSentencePlaying);
             Volatile.Write(ref _aiQueue, queue);
             using var thinking = StartThinkingCue(queue, ct);
 
@@ -1516,6 +1661,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             await foreach (var token in _ai.StreamReplyAsync(messages, ct).ConfigureAwait(false))
             {
                 thinking.Cancel();
+                _answerStartedInTurn = true;
                 reply.Append(token);
                 foreach (var sentence in chunker.Append(token))
                 {
@@ -1708,23 +1854,10 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
                 }
 
                 NoteRecognitionTime(t.Result);
-                if (Volatile.Read(ref _speculation) != speculation)
-                {
-                    return;
-                }
-
-                // Answer early only if the full pause is not about to end anyway, and only a complete short command.
-                var pauseMs = Settings.Activation.EndOfSpeechPauseMs;
-                var silenceMs = (DateTime.UtcNow - speculation.StartedUtc).TotalMilliseconds + 450;
-                if (silenceMs < pauseMs - 250 && ShouldAnswerNow(t.Result.Text))
-                {
-                    speculation.CommitRequested = true;
-                    _listener.CommitAtSilence(EarlyCommitSilenceMs());
-                }
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "Early commit check failed.");
+                _logger.LogDebug(ex, "Early recognition bookkeeping failed.");
             }
             finally
             {
@@ -1754,38 +1887,6 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
     private void CancelSpeculation() => Interlocked.Exchange(ref _speculation, null)?.Cancel();
 
-    /// <summary>The shorter pause after which a complete short command is answered (800 ms with the default 1.4 s).</summary>
-    private int EarlyCommitSilenceMs()
-    {
-        var pause = Settings.Activation.EndOfSpeechPauseMs;
-        return Math.Clamp(pause - 600, 450, pause);
-    }
-
-    /// <summary>
-    /// A complete local command, a clear "да"/"не" to a question, or a clear answer in the setup — not a free
-    /// question for the AI, a greeting or "добре" (people often go on after those), and nothing that sounds unfinished.
-    /// </summary>
-    private bool ShouldAnswerNow(string text)
-    {
-        var match = _wakeWord.Match(text);
-        var request = match.IsMatch ? match.Request : text;
-        if (!HasMeaningfulCommand(request) || UtteranceCompleteness.LooksUnfinished(request) || UtteranceCompleteness.LooksLikeOpener(request))
-        {
-            return false;
-        }
-
-        if (Volatile.Read(ref _setup) is { } setup)
-        {
-            return setup.IsCompleteAnswer(request);
-        }
-
-        if (_pendingConfirmation is not null)
-        {
-            return ConfirmationParser.Parse(request) != ConfirmationAnswer.Unknown;
-        }
-
-        return _commands.IsCompleteCommand(request);
-    }
 
     // ------------------------------------------------------------------ "still talking": the rest of a sentence
 
@@ -1808,6 +1909,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         {
             _listener.BargeInEnabled = false;
             _listener.BargeInContinuation = false;
+            EnableBargeIn(); // while VEDAR works on the answer, the user going on is still noticed
         }
     }
 
@@ -1815,9 +1917,8 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     /// If the user went on speaking after the pause (or the first part ends like "… за"), waits for the rest and
     /// recognizes the whole sentence at once — instead of answering half of it.
     /// </summary>
-    /// <param name="minWatch">After an early commit: listen at least this long (from the start of the watch) for more.</param>
     private async Task<(float[] Samples, RecognitionResult Result)> CompleteUtteranceAsync(
-        float[] samples, RecognitionResult result, Func<float[], Task<RecognitionResult>> recognize, CancellationToken ct, TimeSpan minWatch = default)
+        float[] samples, RecognitionResult result, Func<float[], Task<RecognitionResult>> recognize, CancellationToken ct)
     {
         try
         {
@@ -1829,9 +1930,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
                     break;
                 }
 
-                var deadline = UtteranceCompleteness.LooksUnfinished(result.Text)
-                    ? DateTime.UtcNow + UnfinishedGrace
-                    : part == 0 ? watch.CreatedUtc + minWatch : DateTime.MinValue;
+                var deadline = UtteranceCompleteness.LooksUnfinished(result.Text) ? DateTime.UtcNow + UnfinishedGrace : DateTime.MinValue;
                 while (!watch.Started && DateTime.UtcNow < deadline)
                 {
                     await Task.Delay(20, ct).ConfigureAwait(false);
@@ -1865,6 +1964,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
                 samples = combined;
                 result = await recognize(samples).ConfigureAwait(false);
                 _logger.LogInformation("The user went on speaking; recognized the whole sentence ({Seconds:F1} s).", samples.Length / (double)AudioFrameEventArgs.SampleRate);
+                LearnLongerPause();
             }
         }
         finally
@@ -1877,10 +1977,16 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
     // ------------------------------------------------------------------ voice stop ("Ведар, спри" while speaking)
 
+    /// <summary>
+    /// While VEDAR works on an answer or speaks: "Ведар, спри" stops it, and (with the setting on) the user simply
+    /// starting to speak makes it give way and listen.
+    /// </summary>
     private void EnableBargeIn()
     {
         var s = Settings;
-        if (!s.Activation.VoiceStopWhileSpeaking || s.Microphone.Muted || !_recognizer.IsReady || (_listener.BargeInEnabled && !_listener.BargeInContinuation))
+        var stopWords = s.Activation.VoiceStopWhileSpeaking;
+        var giveWay = s.Activation.GiveWayWhenUserSpeaks;
+        if ((!stopWords && !giveWay) || s.Microphone.Muted || !_recognizer.IsReady)
         {
             return;
         }
@@ -1892,24 +1998,271 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
                 return;
             }
 
-            _bargeInCts?.Dispose();
-            _bargeInCts = CancellationTokenSource.CreateLinkedTokenSource(_turnCts.Token);
+            if (_bargeInGeneration != _turnGeneration || _bargeInCts is null || _bargeInCts.IsCancellationRequested)
+            {
+                _bargeInCts?.Dispose();
+                _bargeInCts = CancellationTokenSource.CreateLinkedTokenSource(_turnCts.Token);
+                _bargeInGeneration = _turnGeneration;
+            }
         }
 
         Volatile.Write(ref _continuationWatch, null);
         _listener.BargeInContinuation = false;
+        _listener.InterruptOnSpeech = giveWay;
         _listener.BargeInEnabled = true;
     }
 
     private void DisableBargeIn()
     {
         Volatile.Write(ref _continuationWatch, null);
+        _listener.InterruptOnSpeech = false;
         _listener.BargeInEnabled = false;
         _listener.BargeInContinuation = false;
         lock (_turnGate)
         {
             // A check still running must not hold the recognizer when the user speaks the next command.
             _bargeInCts?.Cancel();
+        }
+    }
+
+    private void Duck(bool ducked)
+    {
+        if (_output.Ducked != ducked)
+        {
+            _output.Ducked = ducked;
+            _listener.SetPlaybackAttenuation(ducked ? IAudioOutput.DuckDb : 0);
+        }
+    }
+
+    // ------------------------------------------------------------------ the user starts to speak while VEDAR speaks
+
+    /// <summary>
+    /// The user started to speak while VEDAR was speaking or still working on the answer. Like a person, VEDAR
+    /// lowers its voice at once and listens to the first words: if they are meant for it, it stops and listens to
+    /// the user until they are quiet, then answers that; otherwise it carries on.
+    /// </summary>
+    private void OnUserSpeechStarted(object? sender, EventArgs e)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        Interruption interruption;
+        CancellationToken token;
+        long generation;
+        lock (_turnGate)
+        {
+            if (!_turnActive || _turnCts is null || _interruption is not null)
+            {
+                return; // VEDAR has just finished: the speech is simply the user's next request (OnUserSpeechCaptured)
+            }
+
+            interruption = new Interruption(beforeSpeaking: !_answerStartedInTurn, _lastUtterance, _lastUtteranceFollowUp);
+            _interruption = interruption;
+            token = _bargeInCts?.Token ?? _turnCts.Token;
+            generation = _turnGeneration;
+        }
+
+        _logger.LogInformation("The user started to speak while VEDAR was {What}.", interruption.BeforeSpeaking ? "working on the answer" : "speaking");
+        Duck(true);
+        _ = Task.Run(() => CheckInterruptionAsync(interruption, token, generation), CancellationToken.None);
+    }
+
+    private async Task CheckInterruptionAsync(Interruption interruption, CancellationToken token, long generation)
+    {
+        try
+        {
+            await Task.Delay(InterruptionCheckDelayMs, token).ConfigureAwait(false);
+            if (interruption.TakenOver)
+            {
+                return;
+            }
+
+            var audio = _listener.PeekUserSpeech() ?? (interruption.Speech.Task.IsCompletedSuccessfully ? interruption.Speech.Task.Result : null);
+            if (audio is null || audio.Length < AudioFrameEventArgs.SampleRate * 3 / 10)
+            {
+                EndInterruption(interruption);
+                return;
+            }
+
+            var heard = await _recognizer.RecognizeAsync(audio, new RecognitionRequest(RecognitionPurpose.WakeWord, RecognitionPrompts.WakeWord), token).ConfigureAwait(false);
+            LogRecognized("user over VEDAR", heard);
+            if (interruption.TakenOver || Volatile.Read(ref _interruption) != interruption)
+            {
+                return;
+            }
+
+            string reference;
+            lock (_echoReference)
+            {
+                reference = _echoReference.ToString();
+            }
+
+            var action = StopPhraseDetector.Classify(heard.Text, reference, _wakeWord.IsWakeToken, _wakeWord.Match(heard.Text).IsMatch);
+            if (action == BargeInAction.Stop && Settings.Activation.VoiceStopWhileSpeaking)
+            {
+                _logger.LogInformation("Stop by voice while speaking.");
+                EndInterruption(interruption);
+                Stop(listenNext: true);
+                return;
+            }
+
+            if (action != BargeInAction.None || (interruption.BeforeSpeaking && !heard.IsEmpty) || StopPhraseDetector.CountOwnWords(heard.Text, reference) >= 2)
+            {
+                // Meant for VEDAR: stop speaking (or working on the old answer) and listen until the user is quiet.
+                _logger.LogInformation("The user speaks to VEDAR: it stops and listens.");
+                lock (_turnGate)
+                {
+                    if (_turnActive && generation == _turnGeneration)
+                    {
+                        _turnCts?.Cancel();
+                    }
+                }
+
+                return;
+            }
+
+            _logger.LogInformation("Not the user speaking to VEDAR; it carries on.");
+            EndInterruption(interruption);
+        }
+        catch (OperationCanceledException)
+        {
+            // The turn ended (VEDAR finished or was stopped); EndTurnAsync takes over or Stop cleared it.
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Checking the user's speech failed.");
+            EndInterruption(interruption);
+        }
+    }
+
+    /// <summary>The interruption was not for VEDAR: forget the user's speech and play the voice normally again.</summary>
+    private void EndInterruption(Interruption interruption)
+    {
+        if (interruption.TakenOver || Interlocked.CompareExchange(ref _interruption, null, interruption) != interruption)
+        {
+            return;
+        }
+
+        _listener.DropUserSpeech();
+        interruption.Speech.TrySetResult([]);
+        Duck(false);
+    }
+
+    /// <summary>Stop, a new request or a typed text: an interruption in progress no longer matters.</summary>
+    private void CancelInterruption()
+    {
+        if (Interlocked.Exchange(ref _interruption, null) is { } interruption)
+        {
+            _listener.DropUserSpeech();
+            interruption.Speech.TrySetResult([]);
+            Duck(false);
+        }
+    }
+
+    /// <summary>The user's speech that started over VEDAR has ended (the user was quiet for the end-of-speech pause).</summary>
+    private void OnUserSpeechCaptured(object? sender, UtteranceEventArgs e)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (Volatile.Read(ref _interruption) is { } interruption)
+        {
+            interruption.Speech.TrySetResult(e.Samples);
+            return;
+        }
+
+        // VEDAR had just finished when the user started: it is simply the user's next request, without the wake word.
+        if (!TryRunTurn("command", ct => HandleCommandUtteranceAsync(e.Samples, followUp: true, speculation: null, ct, overVedar: true)))
+        {
+            _logger.LogDebug("The user's speech was dropped (busy).");
+        }
+    }
+
+    /// <summary>Listens to the user who started to speak over VEDAR, then handles what they said.</summary>
+    private async Task HandleUserSpeechAsync(Interruption interruption, CancellationToken ct)
+    {
+        try
+        {
+            StateMachine.TryTransition(AssistantState.Listening, "the user speaks");
+            float[] speech;
+            try
+            {
+                speech = await interruption.Speech.Task.WaitAsync(TimeSpan.FromSeconds(Settings.Recognition.MaxConversationSeconds + 5), ct).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                _listener.DropUserSpeech();
+                return;
+            }
+
+            if (speech.Length < AudioFrameEventArgs.SampleRate * 35 / 100)
+            {
+                SetFollowUp();
+                return;
+            }
+
+            if (interruption.BeforeSpeaking && interruption.Previous is { } previous)
+            {
+                // VEDAR had not started to answer: the user was still finishing the sentence. Hear it as one.
+                _logger.LogInformation("The user went on speaking before VEDAR answered; the whole sentence is used.");
+                LearnLongerPause();
+                await HandleCommandUtteranceAsync(Merge(previous, speech), interruption.PreviousFollowUp, speculation: null, ct).ConfigureAwait(false);
+                return;
+            }
+
+            await HandleCommandUtteranceAsync(speech, followUp: true, speculation: null, ct, overVedar: true).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.CompareExchange(ref _interruption, null, interruption);
+        }
+    }
+
+    private static float[] Merge(float[] first, float[] second)
+    {
+        var gap = AudioFrameEventArgs.SampleRate / 4;
+        var combined = new float[first.Length + gap + second.Length];
+        first.CopyTo(combined, 0);
+        second.CopyTo(combined, first.Length + gap);
+        return combined;
+    }
+
+    /// <summary>The user paused longer than VEDAR waits and then went on: wait a little longer from now on.</summary>
+    private void LearnLongerPause()
+    {
+        var s = Settings;
+        var pause = s.Activation.EndOfSpeechPauseMs;
+        if (pause >= LearnedPauseMaxMs)
+        {
+            return;
+        }
+
+        s.Activation.EndOfSpeechPauseMs = Math.Min(LearnedPauseMaxMs, pause + LearnedPauseStepMs);
+        _settingsStore.Save(s);
+        _logger.LogInformation("End-of-speech pause learned: {From} → {To} ms.", pause, s.Activation.EndOfSpeechPauseMs);
+    }
+
+    /// <summary>Tells the listener what VEDAR plays (at the real volume), so that its own voice is not taken for the user's.</summary>
+    private sealed class ListenerAwareOutput(IAudioOutput inner, IVoiceListener listener) : IAudioOutput
+    {
+        public IReadOnlyList<AudioDeviceInfo> GetDevices() => inner.GetDevices();
+        public string? DeviceId { get => inner.DeviceId; set => inner.DeviceId = value; }
+        public float Volume { get => inner.Volume; set => inner.Volume = value; }
+        public bool Ducked { get => inner.Ducked; set => inner.Ducked = value; }
+
+        public Task PlayAsync(float[] samples, int sampleRate, CancellationToken cancellationToken)
+        {
+            var volume = inner.Volume;
+            listener.NotePlayback(volume >= 0.999f ? samples : samples.Select(x => x * volume).ToArray(), sampleRate);
+            return inner.PlayAsync(samples, sampleRate, cancellationToken);
+        }
+
+        public void Dispose()
+        {
         }
     }
 
@@ -1952,7 +2305,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             return;
         }
 
-        if (_disposed || Interlocked.CompareExchange(ref _bargeInBusy, 1, 0) != 0)
+        if (_disposed || !Settings.Activation.VoiceStopWhileSpeaking || Interlocked.CompareExchange(ref _bargeInBusy, 1, 0) != 0)
         {
             return; // one check at a time; pieces heard meanwhile are skipped
         }
@@ -2032,6 +2385,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         }
 
         _spokeInTurn = true;
+        _answerStartedInTurn = true;
         if (remember)
         {
             LastSpokenText = text;
@@ -2049,7 +2403,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             return;
         }
 
-        await using var queue = new SpeechPlaybackQueue(_synthesizer, _output, new SynthesisOptions(Settings.Voice.Rate), OnSpeakingStarted, _logger, ct, OnSentencePlaying);
+        await using var queue = new SpeechPlaybackQueue(_synthesizer, _voiceOutput, new SynthesisOptions(Settings.Voice.Rate), OnSpeakingStarted, _logger, ct, OnSentencePlaying);
         queue.Enqueue(text);
         queue.Complete();
         await queue.Completion.ConfigureAwait(false);
@@ -2162,6 +2516,8 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         _listener.SpeechStarted -= OnSpeechStarted;
         _listener.SpeechPaused -= OnSpeechPaused;
         _listener.SpeechResumed -= OnSpeechResumed;
+        _listener.UserSpeechStarted -= OnUserSpeechStarted;
+        _listener.UserSpeechCaptured -= OnUserSpeechCaptured;
         CancelSpeculation();
         _settingsStore.SettingsChanged -= OnSettingsChanged;
         _ai.FallbackUsed -= OnAiFallback;

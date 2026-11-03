@@ -27,7 +27,7 @@ public static class StopPhraseDetector
     private static readonly HashSet<string> StopWords = new(StringComparer.Ordinal)
     {
         "спри", "спрете", "спирай", "спирайте", "стоп", "стига", "млъкни", "млъкнете", "замълчи", "мълчи",
-        "тихо", "достатъчно", "прекъсни", "прекъснете", "stop",
+        "тихо", "достатъчно", "прекъсни", "прекъснете", "stop", "чакай", "почакай", "изчакай", "чакайте",
         "тига", // "Ведар, стига" is often heard as "Ведар из тига"
     };
 
@@ -81,6 +81,15 @@ public static class StopPhraseDetector
         }
 
         return startsWithWakeWord && firstOwnWake >= 0 ? BargeInAction.Interrupt : BargeInAction.None;
+    }
+
+    private static readonly HashSet<string> Fillers = new(StringComparer.Ordinal) { "а", "е", "и", "о", "у", "ъ", "ъъ", "мм", "хм", "ам", "ем" };
+
+    /// <summary>Words heard that are not VEDAR's own (echo) and not mere sounds: the user's own words.</summary>
+    public static int CountOwnWords(string? heard, string? beingSpoken)
+    {
+        var spoken = BulgarianText.Tokenize(beingSpoken).ToHashSet(StringComparer.Ordinal);
+        return BulgarianText.Tokenize(heard).Count(t => t.Length >= 2 && !Fillers.Contains(t) && !IsEcho(t, spoken));
     }
 
     /// <summary>A stop word, or one of the ways the fast model garbles "спри" ("сприк", "инсприт", "изприт").</summary>

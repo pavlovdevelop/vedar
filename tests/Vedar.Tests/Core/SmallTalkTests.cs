@@ -110,6 +110,18 @@ public class SmallTalkTests
         Assert.StartsWith("Лека нощ", Create(15).Talk.Farewell("Лека нощ!", null));
 
     [Theory]
+    // Measured with the real models: the main model's and the fast model's transcripts of the same audio.
+    [InlineData("колко е часът", "кокочасот", true)]
+    [InlineData("отвори настройките", "путворена стреките", true)]
+    [InlineData("на", "да", true)]
+    [InlineData("добре сен", "добрасен", true)]
+    [InlineData("слъпи", "пърж", false)]  // white noise
+    [InlineData("ви", "побей", false)]     // the end of a word
+    [InlineData("към пършата", "", false)] // keyboard clicks
+    public void Two_transcripts_of_real_speech_agree_and_of_a_noise_do_not(string main, string fast, bool agree) =>
+        Assert.Equal(agree, SpeechAgreement.Similarity(main, fast) >= SpeechAgreement.Threshold);
+
+    [Theory]
     [InlineData("Софийският университет е основан през хиляда осемстотин осемдесет и осма година.", true)]
     [InlineData("университет е основан през осемдесет и осма", true)]
     [InlineData("Добре съм.", false)]                                 // short replies often repeat VEDAR's words
@@ -117,12 +129,4 @@ public class SmallTalkTests
     public void Recognizes_VEDARs_own_words_coming_back(string heard, bool echo) =>
         Assert.Equal(echo, EchoDetector.IsLikelyEcho(heard, "Софийският университет е основан през хиляда осемстотин осемдесет и осма година."));
 
-    [Theory]
-    [InlineData("Искам да те питам.", true)]
-    [InlineData("Кажи ми.", true)]
-    [InlineData("Имам въпрос.", true)]
-    [InlineData("Кажи ми колко е часът.", false)]
-    [InlineData("Колко е часът?", false)]
-    public void Recognizes_an_opener_before_the_actual_request(string text, bool opener) =>
-        Assert.Equal(opener, UtteranceCompleteness.LooksLikeOpener(text));
 }

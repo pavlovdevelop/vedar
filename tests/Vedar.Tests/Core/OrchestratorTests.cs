@@ -319,7 +319,7 @@ public class OrchestratorTests
     [Fact]
     public async Task Voice_stop_can_be_switched_off()
     {
-        await using var h = new OrchestratorHarness(s => s.Activation.VoiceStopWhileSpeaking = false);
+        await using var h = new OrchestratorHarness(s => { s.Activation.VoiceStopWhileSpeaking = false; s.Activation.GiveWayWhenUserSpeaks = false; });
         h.Output.Instant = false;
         await h.StartAsync();
         _ = h.Orchestrator.SubmitTextAsync("помощ");

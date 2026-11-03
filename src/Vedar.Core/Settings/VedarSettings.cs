@@ -11,8 +11,9 @@ public sealed class VedarSettings
     /// <summary>
     /// 2: longer listening (pause at the end of speech, follow-up and command windows).
     /// 3: natural conversation — no beeps by default, VEDAR keeps listening for 30 s after it has spoken.
+    /// 4: VEDAR keeps listening for 2 minutes after it has spoken (the user wants it to listen all the time).
     /// </summary>
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public GeneralSettings General { get; set; } = new();
@@ -81,6 +82,11 @@ public sealed class VedarSettings
             {
                 Activation.FollowUpSeconds = ActivationSettings.DefaultFollowUpSeconds;
             }
+        }
+
+        if (SchemaVersion < 4 && Activation.FollowUpSeconds is 8 or 15 or 30)
+        {
+            Activation.FollowUpSeconds = ActivationSettings.DefaultFollowUpSeconds;
         }
 
         Activation.FollowUpSeconds = Math.Clamp(Activation.FollowUpSeconds, 0, ActivationSettings.MaxFollowUpSeconds);
@@ -173,8 +179,8 @@ public sealed class ActivationSettings
     public string PushToTalkHotkey { get; set; } = DefaultPushToTalk;
     public string StopHotkey { get; set; } = DefaultStop;
     public string MicrophoneToggleHotkey { get; set; } = DefaultMicToggle;
-    public const int DefaultFollowUpSeconds = 30;
-    public const int MaxFollowUpSeconds = 120;
+    public const int DefaultFollowUpSeconds = 120;
+    public const int MaxFollowUpSeconds = 600;
     public const int DefaultCommandListenTimeoutSeconds = 10;
     public const int DefaultEndOfSpeechPauseMs = 1400;
     public const int MinEndOfSpeechPauseMs = 600;
@@ -195,6 +201,12 @@ public sealed class ActivationSettings
     public int EndOfSpeechPauseMs { get; set; } = DefaultEndOfSpeechPauseMs;
     /// <summary>While VEDAR speaks or thinks, listen only for "Ведар, спри" / "спри" / "стоп" and stop at once.</summary>
     public bool VoiceStopWhileSpeaking { get; set; } = true;
+    /// <summary>
+    /// When the user starts to speak while VEDAR speaks or thinks, VEDAR lowers its voice, and if the words are
+    /// meant for it, it stops and listens until the user is quiet (best with headphones; with loudspeakers the user
+    /// has to be louder at the microphone than VEDAR's voice).
+    /// </summary>
+    public bool GiveWayWhenUserSpeaks { get; set; } = true;
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<AiProviderKind>))]

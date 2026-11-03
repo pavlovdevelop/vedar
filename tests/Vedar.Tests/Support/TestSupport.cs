@@ -103,6 +103,14 @@ public sealed class FakeSpeechRecognizer : ISpeechRecognizer
     public TimeSpan Delay { get; set; } = TimeSpan.Zero;
     /// <summary>The processing time reported in the results (how fast the "computer" is).</summary>
     public TimeSpan ReportedTime { get; set; } = TimeSpan.FromMilliseconds(5);
+
+    /// <summary>
+    /// When VEDAR double-checks a command phrase with the fast model (same audio), the fast model hears the same
+    /// words — real speech. Set to false to simulate a phrase "heard" by the main model in a mere noise.
+    /// </summary>
+    public bool FastModelHearsTheSame { get; set; } = true;
+    private float[]? _lastCommandSamples;
+    private string _lastCommandText = string.Empty;
     public string EngineName => "fake";
     public bool IsReady => Ready;
     public void Enqueue(params string[] transcripts) { foreach (var t in transcripts) { _scripted.Enqueue(t); } }
@@ -122,7 +130,22 @@ public sealed class FakeSpeechRecognizer : ISpeechRecognizer
             throw ex;
         }
 
-        var text = Responder?.Invoke(samples16k, request) ?? (_scripted.TryDequeue(out var t) ? t : string.Empty);
+        string text;
+        if (FastModelHearsTheSame && request.Purpose == RecognitionPurpose.WakeWord && ReferenceEquals(samples16k, _lastCommandSamples))
+        {
+            text = _lastCommandText;
+        }
+        else
+        {
+            text = Responder?.Invoke(samples16k, request) ?? (_scripted.TryDequeue(out var t) ? t : string.Empty);
+        }
+
+        if (request.Purpose == RecognitionPurpose.Command)
+        {
+            _lastCommandSamples = samples16k;
+            _lastCommandText = text;
+        }
+
         return new RecognitionResult(text, 0.9f, TimeSpan.FromSeconds(1), ReportedTime);
     }
 
@@ -182,9 +205,48 @@ public sealed class FakeVoiceListener : IVoiceListener
     public int ListeningWindowSeconds { get => _window; set { _window = value; lock (WindowHistory) { WindowHistory.Add(value); } } }
     public List<int> WindowHistory { get; } = [];
 
-    /// <summary>Silence lengths VEDAR asked to commit at (an early answer).</summary>
-    public List<int> CommitRequests { get; } = [];
-    public void CommitAtSilence(int silenceMs) { lock (CommitRequests) { CommitRequests.Add(silenceMs); } }
+    // ---- the user speaking over VEDAR's voice
+    public event EventHandler? UserSpeechStarted;
+    public event EventHandler<UtteranceEventArgs>? UserSpeechCaptured;
+    public bool InterruptOnSpeech { get; set; }
+    private float[]? _userSpeech;
+    public bool UserSpeechInProgress => _userSpeech is not null;
+    public int PlaybackNotes { get; private set; }
+    public List<double> Attenuations { get; } = [];
+    public int Drops { get; private set; }
+    public void NotePlayback(float[] samples, int sampleRate) => PlaybackNotes++;
+    public void SetPlaybackAttenuation(double db) { lock (Attenuations) { Attenuations.Add(db); } }
+    public float[]? PeekUserSpeech() => _userSpeech;
+    public void DropUserSpeech() { Drops++; _userSpeech = null; }
+
+    /// <summary>
+    /// Simulates the detector noticing the user starting to speak over VEDAR (or while it thinks). False if the
+    /// listener would not watch for it (not suppressed, barge-in off, the setting off, or in continuation mode).
+    /// </summary>
+    public bool EmitUserSpeechStart(float secondsSoFar = 1.0f)
+    {
+        if (Mode == ListeningMode.Off || !Suppressed || !BargeInEnabled || !InterruptOnSpeech || BargeInContinuation || _userSpeech is not null)
+        {
+            return false;
+        }
+
+        _userSpeech = new float[(int)(16000 * secondsSoFar)];
+        UserSpeechStarted?.Invoke(this, EventArgs.Empty);
+        return true;
+    }
+
+    /// <summary>The user went quiet: the speech captured since they started. False if it was dropped meanwhile.</summary>
+    public bool EmitUserSpeechEnd(float seconds = 2.0f)
+    {
+        if (_userSpeech is null)
+        {
+            return false;
+        }
+
+        _userSpeech = null;
+        UserSpeechCaptured?.Invoke(this, new UtteranceEventArgs(new float[(int)(16000 * seconds)], Mode, true));
+        return true;
+    }
 
     /// <summary>Simulates the user starting to speak in a command window (no utterance yet).</summary>
     public bool EmitSpeechStart()

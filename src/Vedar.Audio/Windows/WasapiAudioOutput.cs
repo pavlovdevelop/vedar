@@ -18,8 +18,15 @@ public sealed class WasapiAudioOutput : IAudioOutput
     private readonly SemaphoreSlim _playLock = new(1, 1);
     private readonly MMDeviceEnumerator _enumerator = new();
     private float _volume = 0.9f;
+    private volatile bool _ducked;
 
     public WasapiAudioOutput(ILogger<WasapiAudioOutput> logger) => _logger = logger;
+
+    public bool Ducked
+    {
+        get => _ducked;
+        set => _ducked = value;
+    }
 
     public string? DeviceId { get; set; }
 
@@ -80,7 +87,7 @@ public sealed class WasapiAudioOutput : IAudioOutput
             }
         }
 
-        var provider = new FloatArrayWaveProvider(interleaved, WaveFormat.CreateIeeeFloatWaveFormat(rate, channels));
+        var provider = new FloatArrayWaveProvider(interleaved, WaveFormat.CreateIeeeFloatWaveFormat(rate, channels), () => _ducked, channels * rate / 50);
         using var player = new WasapiOut(device, AudioClientShareMode.Shared, useEventSync: true, latency: 60);
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         player.PlaybackStopped += (_, e) =>
@@ -149,9 +156,15 @@ public sealed class WasapiAudioOutput : IAudioOutput
     }
 
     /// <summary>Feeds a float buffer to NAudio; returns 0 at the end so playback stops by itself.</summary>
-    private sealed class FloatArrayWaveProvider(float[] data, WaveFormat format) : IWaveProvider
+    /// <remarks>
+    /// While <paramref name="ducked"/> returns true the voice is played <see cref="IAudioOutput.DuckDb"/> quieter;
+    /// the change is ramped over <paramref name="rampSamples"/> (20 ms) so that it does not click.
+    /// </remarks>
+    private sealed class FloatArrayWaveProvider(float[] data, WaveFormat format, Func<bool> ducked, int rampSamples) : IWaveProvider
     {
+        private static readonly float DuckGain = (float)Math.Pow(10, -IAudioOutput.DuckDb / 20);
         private int _position;
+        private float _gain = 1f;
 
         public WaveFormat WaveFormat { get; } = format;
 
@@ -163,7 +176,22 @@ public sealed class WasapiAudioOutput : IAudioOutput
                 return 0;
             }
 
-            Buffer.BlockCopy(data, _position * 4, buffer, offset, floats * 4);
+            var target = ducked() ? DuckGain : 1f;
+            if (Math.Abs(target - _gain) < 1e-4f && Math.Abs(_gain - 1f) < 1e-4f)
+            {
+                Buffer.BlockCopy(data, _position * 4, buffer, offset, floats * 4);
+            }
+            else
+            {
+                var step = (1f - DuckGain) / Math.Max(1, rampSamples);
+                var span = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(buffer.AsSpan(offset, floats * 4));
+                for (int i = 0; i < floats; i++)
+                {
+                    _gain = _gain < target ? Math.Min(target, _gain + step) : Math.Max(target, _gain - step);
+                    span[i] = data[_position + i] * _gain;
+                }
+            }
+
             _position += floats;
             return floats * 4;
         }

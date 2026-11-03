@@ -69,6 +69,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         _handsFree = s.Activation.HandsFreeEnabled;
         _voiceStopWhileSpeaking = s.Activation.VoiceStopWhileSpeaking;
+        _giveWayWhenUserSpeaks = s.Activation.GiveWayWhenUserSpeaks;
         _pushToTalkHotkey = s.Activation.PushToTalkHotkey;
         _stopHotkey = s.Activation.StopHotkey;
         _micToggleHotkey = s.Activation.MicrophoneToggleHotkey;
@@ -137,6 +138,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private Option<string> _selectedSttModel;
     [ObservableProperty] private bool _handsFree;
     [ObservableProperty] private bool _voiceStopWhileSpeaking;
+    [ObservableProperty] private bool _giveWayWhenUserSpeaks;
     [ObservableProperty] private string _pushToTalkHotkey;
     [ObservableProperty] private string _stopHotkey;
     [ObservableProperty] private string _micToggleHotkey;
@@ -297,6 +299,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         s.Recognition.ModelFile = SelectedSttModel.Value;
         s.Activation.HandsFreeEnabled = HandsFree;
         s.Activation.VoiceStopWhileSpeaking = VoiceStopWhileSpeaking;
+        s.Activation.GiveWayWhenUserSpeaks = GiveWayWhenUserSpeaks;
         s.Activation.PushToTalkHotkey = PushToTalkHotkey;
         s.Activation.StopHotkey = StopHotkey;
         s.Activation.MicrophoneToggleHotkey = MicToggleHotkey;

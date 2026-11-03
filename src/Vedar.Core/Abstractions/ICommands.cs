@@ -56,12 +56,6 @@ public interface ICommandDispatcher
     /// <summary>Human readable list of the available commands (for "помощ").</summary>
     IReadOnlyList<string> DescribeCommands();
 
-    /// <summary>
-    /// The text is a complete local command ("колко е часът", "спри", "благодаря"), so VEDAR may answer after a
-    /// shorter pause. False for phrases that usually go on ("здравей…", "добре…", "искам да поговорим…").
-    /// </summary>
-    bool IsCompleteCommand(string text) => false;
-
     /// <summary>The local command the text would run (its intent id), without running it; null if none.</summary>
     string? FindIntent(string text) => null;
 }

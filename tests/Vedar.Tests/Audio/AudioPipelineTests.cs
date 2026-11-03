@@ -206,31 +206,152 @@ public class VoiceListenerTests
     }
 
     [Fact]
-    public async Task Commit_at_silence_ends_a_complete_sentence_after_a_shorter_pause()
+    public async Task After_the_wake_word_a_pause_to_think_does_not_cut_the_sentence()
     {
         var (listener, input, _) = Create();
         var captured = new List<UtteranceEventArgs>();
         listener.UtteranceCaptured += (_, e) => captured.Add(e);
-        listener.SpeechPaused += (_, _) => listener.CommitAtSilence(800); // "Колко е часът?" was recognized as complete
-        await listener.SetModeAsync(ListeningMode.Command, CancellationToken.None);
+        await listener.SetModeAsync(ListeningMode.WakeWord, CancellationToken.None);
+        // "Ведар, разкажи ми" … 1.2 s … "за Левски": the whole end-of-speech pause applies after the wake word too.
+        await input.FeedAsync(Signals.Concat(Signals.Noise(0.6, 0.002f), Signals.Speechlike(1.2), Signals.Noise(1.2, 0.002f), Signals.Speechlike(1.0), Signals.Noise(2.0, 0.002f)));
+        Assert.Single(captured);
+    }
 
-        await input.FeedAsync(Signals.Concat(Signals.Noise(0.6, 0.002f), Signals.Speechlike(1.2), Signals.Noise(0.9, 0.002f)));
-        var u = Assert.Single(captured); // 0.9 s of silence was enough (the full pause is 1.4 s)
-        Assert.InRange(u.Duration.TotalSeconds, 1.9, 2.5);
+    private static float[] Fleurs(params int[] files)
+    {
+        var all = new List<float>();
+        foreach (var i in files)
+        {
+            all.AddRange(WavFile.ReadMono(Path.Combine(TestModels.TestDataDir, "fleurs", $"fleurs_bg_{i}.wav")).Samples);
+            all.AddRange(new float[4000]);
+        }
+
+        return all.ToArray();
+    }
+
+    private static float[] Scale(float[] x, double db) => x.Select(v => v * (float)Math.Pow(10, db / 20)).ToArray();
+
+    /// <summary>VEDAR (FLEURS speakers 1–3) as the microphone hears it from loudspeakers: quieter, delayed, with an echo.</summary>
+    private static float[] ThroughTheRoom(float[] played, double db, int delayMs)
+    {
+        var offset = delayMs * 16;
+        var wet = new float[played.Length + offset + 3200];
+        for (int n = 0; n < played.Length; n++)
+        {
+            wet[n + offset] += played[n];
+            wet[n + offset + 1600] += played[n] * 0.3f; // a reflection 100 ms later
+            wet[n + offset + 3200] += played[n] * 0.1f;
+        }
+
+        return Scale(wet, db);
+    }
+
+    private static float[] Add(float[] a, float[] b, int at)
+    {
+        var mix = new float[Math.Max(a.Length, at + b.Length)];
+        a.CopyTo(mix, 0);
+        for (int n = 0; n < b.Length; n++)
+        {
+            mix[at + n] += b[n];
+        }
+
+        return mix;
+    }
+
+    private static (VoiceListener Listener, SimulatedAudioInput Input) CreateWithClock()
+    {
+        var store = new TestSettingsStore(new VedarSettings());
+        var input = new SimulatedAudioInput();
+        var listener = new VoiceListener(input, store, Log.Null<VoiceListener>(), () => input.SamplesFed / 16.0);
+        return (listener, input);
+    }
+
+    private static async Task SpeakingAsync(VoiceListener listener, float[] played)
+    {
+        await listener.SetModeAsync(ListeningMode.Command, CancellationToken.None);
+        listener.Suppressed = true;      // VEDAR speaks
+        listener.BargeInEnabled = true;
+        listener.InterruptOnSpeech = true;
+        listener.NotePlayback(played, 16000);
     }
 
     [Fact]
-    public async Task A_planned_early_end_is_dropped_when_the_user_goes_on()
+    public async Task A_user_who_starts_to_speak_just_before_listening_starts_is_not_cut_at_the_first_word()
     {
         var (listener, input, _) = Create();
         var captured = new List<UtteranceEventArgs>();
         listener.UtteranceCaptured += (_, e) => captured.Add(e);
-        listener.SpeechPaused += (_, _) => listener.CommitAtSilence(800);
         await listener.SetModeAsync(ListeningMode.Command, CancellationToken.None);
-
-        await input.FeedAsync(Signals.Concat(Signals.Noise(0.6, 0.002f), Signals.Speechlike(1.2), Signals.Noise(0.6, 0.002f), Signals.Speechlike(1.2), Signals.Noise(2.0, 0.002f)));
+        await input.FeedAsync(Signals.Noise(0.6, 0.002f)); // listening for a while (the noise level is known)
+        listener.Suppressed = true; // VEDAR spoke and has just finished; the short tail before listening again
+        var speech = Signals.Speechlike(1.5);
+        await input.FeedAsync(Signals.Concat(Signals.Noise(0.6, 0.002f), speech[..4000])); // 250 ms said in the tail
+        listener.Suppressed = false;
+        await input.FeedAsync(Signals.Concat(speech[4000..], Signals.Noise(2.0, 0.002f)));
         var u = Assert.Single(captured);
-        Assert.True(u.Duration.TotalSeconds > 3.0, $"{u.Duration.TotalSeconds:F2} s"); // both parts, one sentence
+        Assert.True(u.Duration.TotalSeconds >= 1.5 + 1.2, $"{u.Duration.TotalSeconds:F2} s"); // the whole word and the pause
+    }
+
+    [Fact]
+    public async Task VEDARs_own_voice_from_the_loudspeakers_is_not_taken_for_the_user()
+    {
+        var (listener, input) = CreateWithClock();
+        var started = 0;
+        listener.UserSpeechStarted += (_, _) => started++;
+        var played = Fleurs(1, 2, 3);
+        await SpeakingAsync(listener, played);
+        await input.FeedAsync(Add(Signals.Noise(played.Length / 16000.0 + 1, 0.001f), ThroughTheRoom(played, -8, 120), 0));
+        Assert.Equal(0, started);
+    }
+
+    [Fact]
+    public async Task The_user_speaking_over_VEDAR_is_heard_from_the_start_until_they_go_quiet()
+    {
+        var (listener, input) = CreateWithClock();
+        var started = new List<double>();
+        var captured = new List<UtteranceEventArgs>();
+        var utterances = 0;
+        listener.UserSpeechStarted += (_, _) => started.Add(input.SamplesFed / 16000.0);
+        listener.UserSpeechCaptured += (_, e) => captured.Add(e);
+        listener.UtteranceCaptured += (_, _) => utterances++;
+        var played = Fleurs(1, 2, 3);
+        await SpeakingAsync(listener, played);
+
+        var user = Scale(Fleurs(4), 2); // the user, closer to the microphone than the loudspeakers
+        var mic = Add(Add(Signals.Noise(played.Length / 16000.0 + 4, 0.001f), ThroughTheRoom(played, -14, 120), 0), user, 5 * 16000);
+        await input.FeedAsync(mic[..(6 * 16000)]);
+        Assert.Single(started);
+        Assert.InRange(started[0], 5.0, 6.0);
+
+        // VEDAR stops and starts listening; the user's speech goes on being captured.
+        listener.InterruptOnSpeech = false;
+        listener.BargeInEnabled = false;
+        await listener.SetModeAsync(ListeningMode.Command, CancellationToken.None);
+        listener.Suppressed = false;
+        Assert.True(listener.UserSpeechInProgress);
+        await input.FeedAsync(mic[(6 * 16000)..]);
+
+        var speech = Assert.Single(captured);
+        Assert.True(speech.Duration.TotalSeconds >= user.Length / 16000.0 - 0.6, $"{speech.Duration.TotalSeconds:F2} s of {user.Length / 16000.0:F2} s");
+        Assert.Equal(0, utterances); // not heard a second time as a normal utterance
+        Assert.False(listener.UserSpeechInProgress);
+    }
+
+    [Fact]
+    public async Task Dropping_the_users_speech_watches_for_it_again()
+    {
+        var (listener, input) = CreateWithClock();
+        var started = 0;
+        listener.UserSpeechStarted += (_, _) => started++;
+        var captured = 0;
+        listener.UserSpeechCaptured += (_, _) => captured++;
+        await SpeakingAsync(listener, []);
+        await input.FeedAsync(Add(Signals.Noise(1, 0.001f), Scale(Fleurs(5), 0), 16000)[..(3 * 16000)]);
+        Assert.Equal(1, started);
+        listener.DropUserSpeech(); // e.g. it was a cough
+        Assert.False(listener.UserSpeechInProgress);
+        await input.FeedAsync(Signals.Noise(2, 0.001f));
+        Assert.Equal(0, captured);
     }
 
     [Fact]

@@ -14,8 +14,6 @@ public sealed class VoiceListener : IVoiceListener
     private const int BargeInMaxSamples = 4 * AudioFrameEventArgs.SampleRate;
     /// <summary>After 450 ms of silence the audio so far is offered for early recognition.</summary>
     private const int PauseSignalFrames = 15;
-    /// <summary>After "Ведар, …" a shorter pause is enough: the "still talking" check covers longer pauses.</summary>
-    private const int MaxWakeWordPauseMs = 1000;
     private readonly IAudioInput _input;
     private readonly ISettingsStore _settings;
     private readonly ILogger<VoiceListener> _logger;
@@ -34,11 +32,15 @@ public sealed class VoiceListener : IVoiceListener
     private float _level;
     private long _commandGeneration;
 
-    public VoiceListener(IAudioInput input, ISettingsStore settings, ILogger<VoiceListener> logger)
+    private readonly Func<double> _clockMs;
+
+    /// <param name="clockMs">Milliseconds of a monotonic clock (tests pass the simulated microphone's time).</param>
+    public VoiceListener(IAudioInput input, ISettingsStore settings, ILogger<VoiceListener> logger, Func<double>? clockMs = null)
     {
         _input = input;
         _settings = settings;
         _logger = logger;
+        _clockMs = clockMs ?? (() => System.Diagnostics.Stopwatch.GetTimestamp() * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
         _input.FrameAvailable += OnFrame;
         _input.DeviceError += OnDeviceError;
     }
@@ -61,9 +63,24 @@ public sealed class VoiceListener : IVoiceListener
 
                 _suppressed = value;
                 ResetUtterance();
+                if (!value)
+                {
+                    // Listening starts: the last 300 ms (after VEDAR's voice and its echo have died away) become the
+                    // pre-roll, so a user who starts to speak right now is not cut at the first word.
+                    for (int i = 0; i + EnergyVoiceActivityDetector.FrameSamples <= _quietTail.Count; i += EnergyVoiceActivityDetector.FrameSamples)
+                    {
+                        _preRoll.Enqueue(_quietTail.GetRange(i, EnergyVoiceActivityDetector.FrameSamples).ToArray());
+                    }
+                }
+
+                _quietTail.Clear();
             }
         }
     }
+
+    /// <summary>The last 300 ms heard while suppressed (see <see cref="Suppressed"/>).</summary>
+    private readonly List<float> _quietTail = [];
+    private const int QuietTailSamples = PreRollFrames * EnergyVoiceActivityDetector.FrameSamples;
 
     public event EventHandler<UtteranceEventArgs>? UtteranceCaptured;
     public event EventHandler<UtteranceEventArgs>? BargeInCaptured;
@@ -72,8 +89,18 @@ public sealed class VoiceListener : IVoiceListener
     public event EventHandler? SpeechResumed;
     private bool _bargeContinuation;
     private bool _pauseSignalled;
-    private int _commitAtFrames;
     private int _listeningWindowSeconds;
+
+    // The user starting to speak over VEDAR's voice (see EchoAwareSpeechDetector): from then on the user's speech
+    // is captured until they go quiet, whatever VEDAR does meanwhile (stops, finishes, starts listening).
+    private readonly EchoAwareSpeechDetector _detector = new();
+    private readonly Queue<float[]> _recentFrames = new();
+    private readonly float[] _frame = new float[EchoAwareSpeechDetector.FrameSamples];
+    private int _frameFill;
+    private bool _interruptOnSpeech;
+    private List<float>? _userSpeech;
+    private int _userQuietFrames;
+    private const int UserSpeechPreRollFrames = 20; // 600 ms before the user was noticed
 
     public int ListeningWindowSeconds
     {
@@ -81,48 +108,65 @@ public sealed class VoiceListener : IVoiceListener
         set { lock (_gate) { _listeningWindowSeconds = Math.Max(0, value); } }
     }
 
-    public void CommitAtSilence(int silenceMs)
-    {
-        float[]? completed = null;
-        ListeningMode mode;
-        lock (_gate)
-        {
-            mode = _mode;
-            if (_mode != ListeningMode.Command || _suppressed || !_vad.InSpeech || _utterance.Count == 0)
-            {
-                return;
-            }
-
-            var frames = Math.Max(1, silenceMs / FrameMs);
-            if (_vad.SilenceFrames >= frames)
-            {
-                completed = TakeUtterance();
-            }
-            else
-            {
-                _commitAtFrames = frames;
-            }
-        }
-
-        if (completed is not null)
-        {
-            UtteranceCaptured?.Invoke(this, new UtteranceEventArgs(completed, mode, endedBySilence: true));
-        }
-    }
-
     private const int FrameMs = 1000 * EnergyVoiceActivityDetector.FrameSamples / AudioFrameEventArgs.SampleRate;
 
-    /// <summary>Ends the utterance now (under the lock).</summary>
-    private float[] TakeUtterance()
+    public event EventHandler? UserSpeechStarted;
+    public event EventHandler<UtteranceEventArgs>? UserSpeechCaptured;
+
+    public bool InterruptOnSpeech
     {
-        var samples = _utterance.ToArray();
-        _utterance.Clear();
-        _vad.Reset();
-        _pauseSignalled = false;
-        _commitAtFrames = 0;
-        StopCommandTimer();
-        return samples;
+        get { lock (_gate) { return _interruptOnSpeech; } }
+        set
+        {
+            lock (_gate)
+            {
+                if (_interruptOnSpeech != value)
+                {
+                    _interruptOnSpeech = value;
+                    _detector.Reset();
+                }
+            }
+        }
     }
+
+    public bool UserSpeechInProgress { get { lock (_gate) { return _userSpeech is not null; } } }
+
+    public void NotePlayback(float[] samples, int sampleRate)
+    {
+        var now = NowMs();
+        lock (_gate)
+        {
+            _detector.AddReference(samples, sampleRate, now);
+        }
+    }
+
+    public void SetPlaybackAttenuation(double db)
+    {
+        var now = NowMs();
+        lock (_gate)
+        {
+            _detector.Attenuate(db, now);
+        }
+    }
+
+    public float[]? PeekUserSpeech()
+    {
+        lock (_gate)
+        {
+            return _userSpeech?.ToArray();
+        }
+    }
+
+    public void DropUserSpeech()
+    {
+        lock (_gate)
+        {
+            _userSpeech = null;
+            _detector.Reset();
+        }
+    }
+
+    private double NowMs() => _clockMs();
 
     public bool BargeInContinuation
     {
@@ -177,6 +221,10 @@ public sealed class VoiceListener : IVoiceListener
                 ResetUtterance();
                 ConfigureVad(mode);
                 StopCommandTimer();
+                if (mode == ListeningMode.Off)
+                {
+                    _userSpeech = null;
+                }
             }
 
             if (mode == ListeningMode.Off)
@@ -267,11 +315,10 @@ public sealed class VoiceListener : IVoiceListener
         _vad.Sensitivity = s.Microphone.Sensitivity;
         // In command mode this is the longest pause: a complete sentence is answered earlier (CommitAtSilence).
         // After the wake word a shorter pause is used; the orchestrator's "still talking" check covers longer ones.
-        _vad.HangoverFrames = mode == ListeningMode.WakeWord
-            ? Math.Max(10, Math.Min(s.Activation.EndOfSpeechPauseMs, MaxWakeWordPauseMs) / FrameMs)
-            : PauseFrames();
+        // The whole pause in both modes: VEDAR must never answer while the user is still in the middle of a sentence.
+        _vad.HangoverFrames = PauseFrames();
+        _detector.AbsoluteFloorDb = _vad.AbsoluteFloorDb;
         _pauseSignalled = false;
-        _commitAtFrames = 0;
     }
 
     private int PauseFrames() => Math.Max(10, _settings.Current.Activation.EndOfSpeechPauseMs / FrameMs);
@@ -290,6 +337,8 @@ public sealed class VoiceListener : IVoiceListener
         float[]? completed = null;
         float[]? bargeIn = null;
         float[]? paused = null;
+        float[]? userCompleted = null;
+        bool userStarted = false;
         bool resumed = false;
         bool started = false;
         bool bargeStarted = false;
@@ -315,9 +364,28 @@ public sealed class VoiceListener : IVoiceListener
                 return;
             }
 
-            if (_suppressed)
+            if (_userSpeech is not null)
             {
-                if (_bargeIn)
+                // The user is speaking (noticed over VEDAR's voice): keep listening until they go quiet,
+                // whatever VEDAR does meanwhile.
+                userCompleted = ContinueUserSpeech(samples);
+                StopCommandTimer();
+            }
+            else if (_suppressed)
+            {
+                _quietTail.AddRange(samples);
+                if (_quietTail.Count > QuietTailSamples)
+                {
+                    _quietTail.RemoveRange(0, _quietTail.Count - QuietTailSamples);
+                }
+
+                if (_bargeIn && _interruptOnSpeech && !_bargeContinuation && WatchForUser(samples))
+                {
+                    userStarted = true;
+                    _bargeUtterance.Clear();
+                    _bargeVad.Reset();
+                }
+                else if (_bargeIn)
                 {
                     bargeIn = CollectBargeIn(samples, ref bargeStarted);
                 }
@@ -331,6 +399,16 @@ public sealed class VoiceListener : IVoiceListener
             {
                 StopCommandTimer();
             }
+        }
+
+        if (userStarted)
+        {
+            UserSpeechStarted?.Invoke(this, EventArgs.Empty);
+        }
+
+        if (userCompleted is not null)
+        {
+            UserSpeechCaptured?.Invoke(this, new UtteranceEventArgs(userCompleted, mode, endedBySilence: true));
         }
 
         if (bargeStarted)
@@ -374,6 +452,90 @@ public sealed class VoiceListener : IVoiceListener
 
             UtteranceCaptured?.Invoke(this, new UtteranceEventArgs(completed, mode, endedBySilence: true));
         }
+    }
+
+    /// <summary>
+    /// While VEDAR speaks or thinks: notices the user starting to speak (frame by frame, against VEDAR's own voice).
+    /// When that happens, the user's speech capture starts with the last 600 ms. Called under the lock.
+    /// </summary>
+    private bool WatchForUser(float[] samples)
+    {
+        var frames = SplitFrames(samples);
+        for (int i = 0; i < frames.Count; i++)
+        {
+            var (frame, ms) = frames[i];
+            _recentFrames.Enqueue(frame);
+            while (_recentFrames.Count > UserSpeechPreRollFrames)
+            {
+                _recentFrames.Dequeue();
+            }
+
+            if (_detector.Process(frame, ms))
+            {
+                _userSpeech = [];
+                foreach (var pre in _recentFrames)
+                {
+                    _userSpeech.AddRange(pre);
+                }
+
+                _recentFrames.Clear();
+                _userQuietFrames = 0;
+                for (int j = i + 1; j < frames.Count; j++)
+                {
+                    _userSpeech.AddRange(frames[j].Frame);
+                }
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Adds to the user's speech; returns it when the user has been quiet for the end-of-speech pause.</summary>
+    private float[]? ContinueUserSpeech(float[] samples)
+    {
+        var max = _settings.Current.Recognition.MaxConversationSeconds * AudioFrameEventArgs.SampleRate;
+        foreach (var (frame, ms) in SplitFrames(samples))
+        {
+            _userSpeech!.AddRange(frame);
+            _detector.Process(frame, ms);
+            _userQuietFrames = _detector.LastFrame.User ? 0 : _userQuietFrames + 1;
+            if (_userQuietFrames >= PauseFrames() || _userSpeech.Count >= max)
+            {
+                var speech = _userSpeech.ToArray();
+                _userSpeech = null;
+                _detector.Reset();
+                return speech;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>30 ms frames with the time each was captured (the chunk ends now).</summary>
+    private List<(float[] Frame, double Ms)> SplitFrames(float[] samples)
+    {
+        var frames = new List<(float[], double)>();
+        var size = EchoAwareSpeechDetector.FrameSamples;
+        var total = (_frameFill + samples.Length) / size;
+        var now = NowMs();
+        int i = 0, n = 0;
+        while (i < samples.Length)
+        {
+            var take = Math.Min(size - _frameFill, samples.Length - i);
+            samples.AsSpan(i, take).CopyTo(_frame.AsSpan(_frameFill));
+            _frameFill += take;
+            i += take;
+            if (_frameFill == size)
+            {
+                frames.Add(((float[])_frame.Clone(), now - (total - 1 - n) * 30.0));
+                _frameFill = 0;
+                n++;
+            }
+        }
+
+        return frames;
     }
 
     /// <summary>Barge-in: short pieces of audio heard while VEDAR speaks. Called under the lock.</summary>
@@ -447,7 +609,6 @@ public sealed class VoiceListener : IVoiceListener
                 case VadEvent.SpeechStart:
                     started = true;
                     _pauseSignalled = false;
-                    _commitAtFrames = 0;
                     foreach (var pre in _preRoll)
                     {
                         _utterance.AddRange(pre);
@@ -461,7 +622,6 @@ public sealed class VoiceListener : IVoiceListener
                     completed = _utterance.ToArray();
                     _utterance.Clear();
                     _pauseSignalled = false;
-                    _commitAtFrames = 0;
                     break;
                 default:
                     if (_vad.InSpeech)
@@ -473,7 +633,6 @@ public sealed class VoiceListener : IVoiceListener
                             _utterance.Clear();
                             _vad.Reset();
                             _pauseSignalled = false;
-                            _commitAtFrames = 0;
                             break;
                         }
 
@@ -485,9 +644,8 @@ public sealed class VoiceListener : IVoiceListener
                         var silence = _vad.SilenceFrames;
                         if (silence == 0 && _pauseSignalled)
                         {
-                            // The user went on speaking: the early recognition is outdated, and so is a planned commit.
+                            // The user went on speaking: the early recognition is outdated.
                             _pauseSignalled = false;
-                            _commitAtFrames = 0;
                             resumed = true;
                             paused = null;
                         }
@@ -495,11 +653,6 @@ public sealed class VoiceListener : IVoiceListener
                         {
                             _pauseSignalled = true;
                             paused = _utterance.ToArray();
-                        }
-
-                        if (_commitAtFrames > 0 && silence >= _commitAtFrames)
-                        {
-                            completed = TakeUtterance();
                         }
                     }
                     else
@@ -527,7 +680,6 @@ public sealed class VoiceListener : IVoiceListener
         _preRoll.Clear();
         _vad.Reset();
         _pauseSignalled = false;
-        _commitAtFrames = 0;
         _bargeUtterance.Clear();
         _bargeVad.Reset();
     }
@@ -570,6 +722,7 @@ public sealed class VoiceListener : IVoiceListener
         lock (_gate)
         {
             ResetUtterance();
+            _userSpeech = null;
         }
 
         MicrophoneError?.Invoke(this, e);

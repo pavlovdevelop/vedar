@@ -342,6 +342,19 @@ switch (args[0])
         return 0;
     }
 
+    case "bench-bleed":
+    {
+        using var tts = await CreateTtsAsync();
+        using var stt = new WhisperSpeechRecognizer(settings, resolve, NullLogger<WhisperSpeechRecognizer>.Instance);
+        await stt.InitializeAsync(CancellationToken.None);
+        await PromptBleedBench.RunAsync(stt, tts);
+        return 0;
+    }
+
+    case "bench-bargein":
+        BargeInBench.Run(args[1], args.Length > 2 ? int.Parse(args[2], CultureInfo.InvariantCulture) : 8);
+        return 0;
+
     case "bench-vad":
     {
         var minutes = args.Length > 1 ? double.Parse(args[1], CultureInfo.InvariantCulture) : 10;

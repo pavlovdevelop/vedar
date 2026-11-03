@@ -119,8 +119,10 @@ public class NaturalConversationTests
         Assert.Equal("Зле съм.", request[^1].Content);
     }
 
-    [Fact]
-    public async Task Okay_after_an_answer_needs_no_reply_and_VEDAR_goes_quiet()
+    [Theory]
+    [InlineData("Добре.")]
+    [InlineData("Спри.")]
+    public async Task Okay_or_stop_while_VEDAR_is_quiet_needs_no_reply_and_VEDAR_keeps_listening(string heard)
     {
         await using var h = new OrchestratorHarness();
         await h.StartAsync();
@@ -128,9 +130,11 @@ public class NaturalConversationTests
         await ListeningQuietlyAsync(h);
         var replies = Replies(h);
 
-        h.Recognizer.Responder = (_, r) => r.Purpose == RecognitionPurpose.Command ? "Добре." : string.Empty;
+        h.Recognizer.Responder = (_, r) => r.Purpose == RecognitionPurpose.Command ? heard : "Добре.";
         Assert.True(h.Listener.Emit());
-        await Wait.UntilAsync(() => h.Listener.Mode == ListeningMode.WakeWord && !h.Orchestrator.IsTurnActive);
+        await Wait.UntilAsync(() => h.Recognizer.Requests.Count > 0);
+        await Task.Delay(100);
+        await ListeningQuietlyAsync(h); // still listening without the wake word
         Assert.Equal(replies, Replies(h));
     }
 
@@ -276,19 +280,20 @@ public class NaturalConversationTests
     }
 
     [Fact]
-    public async Task A_complete_short_command_is_answered_after_a_shorter_pause_with_the_early_recognition()
+    public async Task The_recognition_started_during_the_pause_is_used_but_VEDAR_waits_for_the_whole_pause()
     {
         await using var h = new OrchestratorHarness();
         await h.StartAsync();
-        h.Recognizer.Responder = (_, r) => r.Purpose == RecognitionPurpose.Command ? "Колко е часът?" : string.Empty;
+        h.Recognizer.Responder = (_, _) => "Колко е часът?";
         h.Orchestrator.PushToTalk();
         await ListeningQuietlyAsync(h);
 
         Assert.True(h.Listener.EmitSpeechStart());
         Assert.True(h.Listener.EmitPause(1.0f)); // 450 ms of silence after "Колко е часът?"
-        await Wait.UntilAsync(() => h.Listener.CommitRequests.Count > 0, 2000);
-        Assert.Equal(800, h.Listener.CommitRequests[0]); // instead of 1400 ms
-        Assert.True(h.Listener.EmitEnd(1.35f));
+        await Wait.UntilAsync(() => h.Recognizer.Requests.Count == 1, 2000);
+        await Task.Delay(300);
+        Assert.DoesNotContain("четиринадесет", h.Spoken); // the user may still go on: no answer before the pause is over
+        Assert.True(h.Listener.EmitEnd(1.95f));      // after the whole 1.4 s pause
         await Wait.UntilAsync(() => h.Spoken.Contains("четиринадесет"));
 
         Assert.Single(h.Recognizer.Requests, r => r.Purpose == RecognitionPurpose.Command); // recognized once, during the pause
@@ -300,7 +305,7 @@ public class NaturalConversationTests
         await using var h = new OrchestratorHarness();
         await h.StartAsync();
         h.Recognizer.ReportedTime = TimeSpan.FromSeconds(4); // measured: a cancelled recognition would hold the CPU
-        h.Recognizer.Responder = (_, r) => r.Purpose == RecognitionPurpose.Command ? "Колко е часът?" : string.Empty;
+        h.Recognizer.Responder = (_, _) => "Колко е часът?";
         h.Orchestrator.PushToTalk();
         await ListeningQuietlyAsync(h);
         Assert.True(h.Listener.Emit());
@@ -312,30 +317,8 @@ public class NaturalConversationTests
         Assert.True(h.Listener.EmitPause(1.0f));
         await Task.Delay(300);
         Assert.Equal(requests, h.Recognizer.Requests.Count); // no recognition during the pause
-        Assert.Empty(h.Listener.CommitRequests);             // and the full pause is waited for
         Assert.True(h.Listener.EmitEnd(1.5f));
-        await Wait.UntilAsync(() => h.Recognizer.Requests.Count == requests + 1);
-    }
-
-    [Theory]
-    [InlineData("Искам да те питам.")]
-    [InlineData("Разкажи ми за историята на България.")]
-    [InlineData("Здравей.")]
-    [InlineData("Добре.")]
-    [InlineData("Разкажи ми за")]
-    public async Task No_early_answer_for_openers_free_questions_greetings_or_unfinished_sentences(string soFar)
-    {
-        await using var h = new OrchestratorHarness();
-        await h.StartAsync();
-        h.Recognizer.Responder = (_, r) => r.Purpose == RecognitionPurpose.Command ? soFar : string.Empty;
-        h.Orchestrator.PushToTalk();
-        await ListeningQuietlyAsync(h);
-
-        Assert.True(h.Listener.EmitSpeechStart());
-        Assert.True(h.Listener.EmitPause(1.0f));
-        await Wait.UntilAsync(() => h.Recognizer.Requests.Count > 0);
-        await Task.Delay(300);
-        Assert.Empty(h.Listener.CommitRequests); // the full pause is waited for
+        await Wait.UntilAsync(() => h.Recognizer.Requests.Count > requests);
     }
 
     [Fact]

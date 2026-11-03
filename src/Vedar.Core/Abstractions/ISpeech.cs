@@ -81,10 +81,22 @@ public interface IVoiceListener : IDisposable
     /// </summary>
     int ListeningWindowSeconds { get; set; }
     /// <summary>
-    /// Ends the current command utterance once the user's pause reaches <paramref name="silenceMs"/> (at once if it
-    /// already has). Cancelled if the user goes on speaking. Used to answer as soon as a sentence is complete.
+    /// While barge-in is on and not in <see cref="BargeInContinuation"/>: notice the user starting to speak over
+    /// VEDAR's own voice (or while VEDAR thinks). Then <see cref="UserSpeechStarted"/> is raised and the user's
+    /// speech is captured — from just before it was noticed until the user is quiet for the end-of-speech pause,
+    /// whatever VEDAR does meanwhile — and reported through <see cref="UserSpeechCaptured"/>.
     /// </summary>
-    void CommitAtSilence(int silenceMs);
+    bool InterruptOnSpeech { get; set; }
+    /// <summary>The user's speech that started over VEDAR's voice is still being captured.</summary>
+    bool UserSpeechInProgress { get; }
+    /// <summary>Audio VEDAR is about to play, so that its own voice can be told from the user's.</summary>
+    void NotePlayback(float[] samples, int sampleRate);
+    /// <summary>VEDAR's voice is played this much quieter (dB) from now on (it gives way while the user speaks).</summary>
+    void SetPlaybackAttenuation(double db);
+    /// <summary>The user's speech captured so far (for a quick check), or null.</summary>
+    float[]? PeekUserSpeech();
+    /// <summary>What was heard was not the user speaking to VEDAR: forget it and watch again.</summary>
+    void DropUserSpeech();
     /// <summary>Current input level 0..1 (for the microphone meter).</summary>
     float Level { get; }
 
@@ -103,6 +115,10 @@ public interface IVoiceListener : IDisposable
     event EventHandler<UtteranceEventArgs>? SpeechPaused;
     /// <summary>The user went on speaking after <see cref="SpeechPaused"/>.</summary>
     event EventHandler? SpeechResumed;
+    /// <summary>The user started speaking over VEDAR's voice (see <see cref="InterruptOnSpeech"/>).</summary>
+    event EventHandler? UserSpeechStarted;
+    /// <summary>The user's speech that started over VEDAR's voice, until the user went quiet.</summary>
+    event EventHandler<UtteranceEventArgs>? UserSpeechCaptured;
     event EventHandler? SpeechStarted;
     /// <summary>No speech started within the command timeout.</summary>
     event EventHandler? CommandTimeout;

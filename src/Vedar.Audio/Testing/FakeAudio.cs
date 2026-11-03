@@ -23,6 +23,9 @@ public sealed class SimulatedAudioInput : IAudioInput
     public bool FailOnStart { get; set; }
     public List<string?> StartedDevices { get; } = [];
 
+    /// <summary>All samples delivered so far (a clock for tests: SamplesFed / 16 = milliseconds).</summary>
+    public long SamplesFed { get; private set; }
+
     public event EventHandler<AudioFrameEventArgs>? FrameAvailable;
     public event EventHandler<AudioDeviceErrorEventArgs>? DeviceError;
 
@@ -77,6 +80,7 @@ public sealed class SimulatedAudioInput : IAudioInput
             }
 
             var len = Math.Min(frame, samples16k.Length - i);
+            SamplesFed += len;
             FrameAvailable?.Invoke(this, new AudioFrameEventArgs(samples16k.AsSpan(i, len).ToArray()));
             if (realTime)
             {
@@ -109,6 +113,26 @@ public sealed class RecordingAudioOutput : IAudioOutput
     public string? DeviceId { get; set; }
     public float Volume { get; set; } = 1f;
     public bool IsPlaying { get; private set; }
+
+    private bool _ducked;
+    /// <summary>Every change of <see cref="Ducked"/>, in order.</summary>
+    public List<bool> DuckHistory { get; } = [];
+
+    public bool Ducked
+    {
+        get => _ducked;
+        set
+        {
+            lock (_gate)
+            {
+                if (_ducked != value)
+                {
+                    _ducked = value;
+                    DuckHistory.Add(value);
+                }
+            }
+        }
+    }
 
     public IReadOnlyList<AudioDeviceInfo> GetDevices() => [new AudioDeviceInfo("rec", "Recording output", true)];
 

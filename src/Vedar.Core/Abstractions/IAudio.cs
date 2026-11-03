@@ -44,6 +44,15 @@ public interface IAudioOutput : IDisposable
     float Volume { get; set; }
 
     /// <summary>
+    /// While true, VEDAR's voice is played about 15 dB quieter — it gives way when the user starts to speak.
+    /// Takes effect within ~0.1 s, also in the middle of a sound.
+    /// </summary>
+    bool Ducked { get; set; }
+
+    /// <summary>How much quieter (dB) the voice is while <see cref="Ducked"/>.</summary>
+    public const double DuckDb = 15;
+
+    /// <summary>
     /// Plays mono float samples. Completes when playback ends. Cancelling the token stops playback immediately
     /// and completes the task with <see cref="OperationCanceledException"/>.
     /// </summary>
