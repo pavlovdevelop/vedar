@@ -156,6 +156,7 @@ public class ConversationSessionTests
         Assert.Contains("Стевко", prompt);
         Assert.Contains("не можеш да изпълняваш команди", prompt);
         Assert.Contains("първи ноември", prompt);
+        Assert.Contains("чута грешно", prompt); // a garbled phrase is asked about, not answered with a guess
     }
 }
 
