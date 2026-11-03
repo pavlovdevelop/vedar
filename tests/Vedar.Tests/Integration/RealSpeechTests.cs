@@ -2,8 +2,11 @@ using System.Diagnostics;
 using Vedar.Audio.Dsp;
 using Vedar.Commands;
 using Vedar.Core.Abstractions;
+using Vedar.Core.Audio;
 using Vedar.Core.Localization;
+using Vedar.Core.Orchestration;
 using Vedar.Core.Settings;
+using Vedar.Core.Text;
 using Vedar.Speech.Recognition;
 using Vedar.Speech.Synthesis;
 using Vedar.Speech.WakeWord;
@@ -294,6 +297,72 @@ public class RealSpeechTests(RealSpeechFixture fx, ITestOutputHelper output) : I
         output.WriteLine($"Wake word detected {wakeOk}/{cases.Length}, intent correct {intentOk}/{cases.Length}.");
         Assert.True(intentOk >= 3, $"intent accuracy {intentOk}/{cases.Length}");
         Assert.True(wakeOk >= 2, $"wake word detection {wakeOk}/{cases.Length}");
+    }
+
+    [Fact]
+    public async Task Short_phrases_said_by_a_voice_are_never_taken_for_a_noise_and_noises_are()
+    {
+        SkipIfNoModels();
+        // As VEDAR checks a short phrase: the main model (command examples), the fast model (none), and the voice check
+        // on the whole utterance (0.6 s before the speech, the 1.4 s end-of-speech pause after, a quiet room).
+        var wake = new WakeWordMatcher();
+        var random = new Random(3);
+        float[] Utterance(float[] sound)
+        {
+            var x = new float[9600 + sound.Length + 22400];
+            for (int i = 0; i < x.Length; i++)
+            {
+                x[i] = (float)((random.NextDouble() * 2 - 1) * 0.0017);
+            }
+
+            sound.CopyTo(x, 9600);
+            return x;
+        }
+
+        string Request(string text)
+        {
+            var m = wake.Match(text);
+            return BulgarianText.NormalizeForMatching(m.IsMatch ? m.Request : text);
+        }
+
+        async Task<(string Main, string Fast, int Voiced, AssistantOrchestrator.Hearing Verdict)> JudgeAsync(float[] audio)
+        {
+            var main = await fx.Recognizer!.RecognizeAsync(audio, new RecognitionRequest(RecognitionPurpose.Command, RecognitionPrompts.Commands), CancellationToken.None);
+            var fast = await fx.Recognizer!.RecognizeAsync(audio, new RecognitionRequest(RecognitionPurpose.WakeWord, RecognitionPrompts.WakeWord), CancellationToken.None);
+            var a = Request(main.Text);
+            var b = Request(fast.Text);
+            var agreement = a.Length == 0 ? 1 : b.Length == 0 ? 0 : SpeechAgreement.Similarity(a, b);
+            var voiced = VoicePresence.VoicedMilliseconds(audio);
+            return (main.Text, fast.Text, voiced, AssistantOrchestrator.Judge(agreement, voiced));
+        }
+
+        var takenForNoise = 0;
+        foreach (var phrase in new[] { "Да.", "Не.", "Спри.", "Помощ.", "Как си?", "Утре.", "Колко е часът?" })
+        {
+            var (main, fast, voiced, verdict) = await JudgeAsync(Utterance(StreamingResampler.Resample(await fx.SynthesizeAsync(phrase), 22050, 16000)));
+            output.WriteLine($"{phrase,-16} main '{main}' | fast '{fast}' | voice {voiced} ms → {verdict}");
+            takenForNoise += verdict == AssistantOrchestrator.Hearing.Noise ? 1 : 0;
+        }
+
+        Assert.Equal(0, takenForNoise); // a voice is always answered: understood, or "Моля?"
+
+        var noises = new (string Name, float[] Sound)[]
+        {
+            ("white noise", Enumerable.Range(0, 9600).Select(_ => (float)((random.NextDouble() * 2 - 1) * 0.017)).ToArray()),
+            ("keyboard clicks", Enumerable.Range(0, 32000).Select(n => n % 3000 < 300 ? (float)((random.NextDouble() * 2 - 1) * Math.Exp(-(n % 3000) / 30.0) * 0.3) : 0f).ToArray()),
+            ("silence", new float[19200]),
+        };
+        var ignored = 0;
+        foreach (var (name, sound) in noises)
+        {
+            var (main, fast, voiced, verdict) = await JudgeAsync(Utterance(sound));
+            var quiet = string.IsNullOrWhiteSpace(main) || verdict == AssistantOrchestrator.Hearing.Noise;
+            output.WriteLine($"{name,-16} main '{main}' | fast '{fast}' | voice {voiced} ms → {(string.IsNullOrWhiteSpace(main) ? "nothing heard" : verdict.ToString())}");
+            ignored += quiet ? 1 : 0;
+            Assert.True(voiced < AssistantOrchestrator.MinVoicedMs, $"{name}: {voiced} ms of voice");
+        }
+
+        Assert.True(ignored >= noises.Length - 1, $"noises ignored {ignored}/{noises.Length}");
     }
 
     [Fact]

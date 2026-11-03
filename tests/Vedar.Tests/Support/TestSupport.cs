@@ -177,6 +177,25 @@ public sealed class FakeSpeechSynthesizer : ISpeechSynthesizer
     public void Dispose() { }
 }
 
+/// <summary>Synthetic sounds for tests that need no recordings.</summary>
+public static class TestAudio
+{
+    /// <summary>A sustained vowel at a man's pitch (120 Hz, 8 harmonics) in the middle 60% of the sound, silence around it.</summary>
+    public static float[] Vowel(float seconds, double pitchHz = 120)
+    {
+        var x = new float[(int)(16000 * seconds)];
+        for (int n = x.Length / 5; n < x.Length * 4 / 5; n++)
+        {
+            for (int k = 1; k <= 8; k++)
+            {
+                x[n] += (float)(0.05 / k * Math.Sin(2 * Math.PI * pitchHz * k * n / 16000));
+            }
+        }
+
+        return x;
+    }
+}
+
 /// <summary>Voice listener controlled by the test: emits utterances on demand.</summary>
 public sealed class FakeVoiceListener : IVoiceListener
 {
@@ -198,6 +217,11 @@ public sealed class FakeVoiceListener : IVoiceListener
     public event EventHandler? CommandTimeout;
     public event EventHandler<AudioDeviceErrorEventArgs>? MicrophoneError;
     public bool BargeInEnabled { get; set; }
+
+    /// <summary>When set, the emitted audio holds a human-like voice (a vowel) instead of silence.</summary>
+    public bool Voiced { get; set; }
+
+    private float[] Sound(float seconds) => Voiced ? TestAudio.Vowel(seconds) : new float[(int)(16000 * seconds)];
     public bool BargeInContinuation { get; set; }
 
     private int _window;
@@ -230,7 +254,7 @@ public sealed class FakeVoiceListener : IVoiceListener
             return false;
         }
 
-        _userSpeech = new float[(int)(16000 * secondsSoFar)];
+        _userSpeech = Sound(secondsSoFar);
         UserSpeechStarted?.Invoke(this, EventArgs.Empty);
         return true;
     }
@@ -244,7 +268,7 @@ public sealed class FakeVoiceListener : IVoiceListener
         }
 
         _userSpeech = null;
-        UserSpeechCaptured?.Invoke(this, new UtteranceEventArgs(new float[(int)(16000 * seconds)], Mode, true));
+        UserSpeechCaptured?.Invoke(this, new UtteranceEventArgs(Sound(seconds), Mode, true));
         return true;
     }
 
@@ -268,7 +292,7 @@ public sealed class FakeVoiceListener : IVoiceListener
             return false;
         }
 
-        SpeechPaused?.Invoke(this, new UtteranceEventArgs(new float[(int)(16000 * seconds)], Mode, false));
+        SpeechPaused?.Invoke(this, new UtteranceEventArgs(Sound(seconds), Mode, false));
         return true;
     }
 
@@ -282,7 +306,7 @@ public sealed class FakeVoiceListener : IVoiceListener
             return false;
         }
 
-        UtteranceCaptured?.Invoke(this, new UtteranceEventArgs(new float[(int)(16000 * seconds)], Mode, true));
+        UtteranceCaptured?.Invoke(this, new UtteranceEventArgs(Sound(seconds), Mode, true));
         return true;
     }
 
@@ -295,7 +319,7 @@ public sealed class FakeVoiceListener : IVoiceListener
         }
 
         BargeInSpeechStarted?.Invoke(this, EventArgs.Empty);
-        BargeInCaptured?.Invoke(this, new UtteranceEventArgs(new float[(int)(16000 * seconds)], Mode, true));
+        BargeInCaptured?.Invoke(this, new UtteranceEventArgs(Sound(seconds), Mode, true));
         return true;
     }
 
@@ -307,7 +331,7 @@ public sealed class FakeVoiceListener : IVoiceListener
             return false;
         }
 
-        BargeInCaptured?.Invoke(this, new UtteranceEventArgs(new float[(int)(16000 * seconds)], Mode, true));
+        BargeInCaptured?.Invoke(this, new UtteranceEventArgs(Sound(seconds), Mode, true));
         return true;
     }
 
@@ -335,7 +359,7 @@ public sealed class FakeVoiceListener : IVoiceListener
         }
 
         SpeechStarted?.Invoke(this, EventArgs.Empty);
-        UtteranceCaptured?.Invoke(this, new UtteranceEventArgs(new float[(int)(16000 * seconds)], Mode, true));
+        UtteranceCaptured?.Invoke(this, new UtteranceEventArgs(Sound(seconds), Mode, true));
         return true;
     }
 

@@ -3,12 +3,17 @@ namespace Vedar.Core.Text;
 /// <summary>
 /// How alike two transcripts of the same audio are (the main model's and the fast model's). Real speech gives
 /// similar letters even when both models garble it ("Колко е часът" / "Коку отчисут"); a noise gives unrelated
-/// "words" ("Слъпи" / "Пърж"). Compares letters only (spaces are where the models disagree most), as the share of
-/// the shorter text found in order in the longer one.
+/// "words" ("Слъпи" / "Пърж"). Compares letters only (spaces are where the models disagree most): the letters found
+/// in the same order in both, against the length of both (2·common / (a + b)). Measuring against the shorter text
+/// alone let short unrelated words agree ("Отвори" / "Оте", 0.67 instead of 0.44).
 /// </summary>
 public static class SpeechAgreement
 {
+    /// <summary>About the same letters: with a human voice in the sound, this is speech.</summary>
     public const double Threshold = 0.5;
+
+    /// <summary>Nearly the same: speech even if no voice was found in the sound (two models rarely invent the same).</summary>
+    public const double Strong = 0.8;
 
     public static double Similarity(string a, string b)
     {
@@ -19,11 +24,7 @@ public static class SpeechAgreement
             return x.Length == y.Length ? 1 : 0;
         }
 
-        // Longest common subsequence relative to the shorter text, damped when the lengths differ a lot.
-        var lcs = Lcs(x, y);
-        var shorter = Math.Min(x.Length, y.Length);
-        var longer = Math.Max(x.Length, y.Length);
-        return lcs / (double)shorter * Math.Min(1.0, 2.0 * shorter / longer);
+        return 2.0 * Lcs(x, y) / (x.Length + y.Length);
     }
 
     private static int Lcs(string a, string b)

@@ -118,6 +118,9 @@ public class SmallTalkTests
     [InlineData("слъпи", "пърж", false)]  // white noise
     [InlineData("ви", "побей", false)]     // the end of a word
     [InlineData("към пършата", "", false)] // keyboard clicks
+    [InlineData("слъпи", "сържен в тези", false)] // near silence (the voice check also rejects it)
+    [InlineData("отвори", "оте", false)]  // "Утре" said; the main model heard a word from its examples
+    [InlineData("добре съм", "добре съм благодаря", true)] // one model heard a word more
     public void Two_transcripts_of_real_speech_agree_and_of_a_noise_do_not(string main, string fast, bool agree) =>
         Assert.Equal(agree, SpeechAgreement.Similarity(main, fast) >= SpeechAgreement.Threshold);
 

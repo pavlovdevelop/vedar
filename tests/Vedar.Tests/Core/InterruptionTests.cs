@@ -208,8 +208,79 @@ public class InterruptionTests
         h.Recognizer.FastModelHearsTheSame = false;
         h.Recognizer.Responder = (_, r) => r.Purpose == RecognitionPurpose.Command ? "Вали." : "Воли!";
         h.Ai.Reply("Тогава вземи чадър.");
+        h.Listener.Voiced = true; // somebody really spoke
         Assert.True(h.Listener.Emit(0.8f));
         await Wait.UntilAsync(() => h.Spoken.Contains("чадър"), 3000);
+    }
+
+    [Fact]
+    public async Task Invented_words_that_look_alike_are_ignored_when_there_is_no_voice_in_the_sound()
+    {
+        await using var h = new OrchestratorHarness(s => s.Ai.AnnounceCloudUse = false);
+        await h.StartAsync();
+        h.Ai.Reply("Да, разбира се.");
+        await h.Orchestrator.SubmitTextAsync("Може ли да ти задам въпрос?");
+        await Wait.UntilAsync(() => h.Listener.Mode == ListeningMode.Command && h.Orchestrator.State == AssistantState.Listening);
+        var spoken = h.Synth.Spoken.Count;
+
+        // Measured with the real models on near silence: the two "words" share letters (agreement 0.55).
+        h.Recognizer.FastModelHearsTheSame = false;
+        h.Recognizer.Responder = (_, r) => r.Purpose == RecognitionPurpose.Command ? "Слъпи." : "Сържен в тези.";
+        Assert.True(h.Listener.Emit(1.2f));
+        await Wait.UntilAsync(() => h.Recognizer.Requests.Count(r => r.Purpose == RecognitionPurpose.WakeWord) == 1, 3000);
+        await h.IdleAsync();
+        Assert.Single(h.Ai.Requests);
+        Assert.Equal(spoken, h.Synth.Spoken.Count); // not even "Моля?"
+    }
+
+    [Fact]
+    public async Task A_voice_that_the_models_hear_differently_gets_Molya_once_and_nothing_is_run()
+    {
+        await using var h = new OrchestratorHarness(s => s.Ai.AnnounceCloudUse = false);
+        await h.StartAsync();
+        await h.Orchestrator.SubmitTextAsync("колко е часът");
+        await Wait.UntilAsync(() => h.Listener.Mode == ListeningMode.Command && h.Orchestrator.State == AssistantState.Listening);
+
+        // Measured with the real models: "Помощ" said by VEDAR's voice, the fast model heard "Повъжт" (agreement 0.40).
+        h.Listener.Voiced = true;
+        h.Recognizer.FastModelHearsTheSame = false;
+        h.Recognizer.Responder = (_, r) => r.Purpose == RecognitionPurpose.Command ? "Помощ." : "Повъжт!";
+        Assert.True(h.Listener.Emit(1.0f));
+        await Wait.UntilAsync(() => h.Spoken.Contains("Моля?") || h.Spoken.Contains("Кажи пак?"), 3000, "VEDAR asks, like a person");
+        await Wait.UntilAsync(() => h.Listener.Mode == ListeningMode.Command && h.Orchestrator.State == AssistantState.Listening);
+        Assert.DoesNotContain("Ведар, постави ключа", h.Spoken); // the help was not given for an unclear word
+        var spoken = h.Synth.Spoken.Count;
+
+        // Unclear again (perhaps a television): VEDAR does not keep asking.
+        Assert.True(h.Listener.Emit(1.0f));
+        await Wait.UntilAsync(() => h.Recognizer.Requests.Count(r => r.Purpose == RecognitionPurpose.WakeWord) == 2, 3000);
+        await h.IdleAsync();
+        Assert.Equal(spoken, h.Synth.Spoken.Count);
+
+        // Said clearly: understood, and the next unclear phrase may be asked about again.
+        h.Recognizer.FastModelHearsTheSame = true;
+        Assert.True(h.Listener.Emit(1.0f));
+        await Wait.UntilAsync(() => h.Spoken.Contains("Ведар, постави ключа"), 3000);
+        await Wait.UntilAsync(() => h.Listener.Mode == ListeningMode.Command && h.Orchestrator.State == AssistantState.Listening);
+        h.Recognizer.FastModelHearsTheSame = false;
+        spoken = h.Synth.Spoken.Count;
+        Assert.True(h.Listener.Emit(1.0f));
+        await Wait.UntilAsync(() => System.Text.RegularExpressions.Regex.IsMatch(string.Join(" ", h.Synth.Spoken.Skip(spoken)), "Моля|Кажи пак"), 3000);
+        Assert.Empty(h.System.Actions);
+    }
+
+    [Theory]
+    [InlineData(1.0, 0, "Speech")]   // both models heard the same: speech even if the voice check missed it
+    [InlineData(0.8, 0, "Speech")]
+    [InlineData(0.55, 0, "Noise")]   // alike invented words in a noise ("Слъпи" / "Сържен в тези")
+    [InlineData(0.0, 0, "Noise")]
+    [InlineData(0.9, 79, "Speech")]
+    [InlineData(0.5, 79, "Noise")]
+    [InlineData(0.5, 80, "Speech")]  // a voice and about the same letters ("Вали" / "Воли")
+    [InlineData(0.4, 300, "Unclear")] // a voice, different words ("Помощ" / "Повъжт"): "Моля?"
+    public void The_second_opinion_needs_a_voice_or_nearly_the_same_words(double agreement, int voicedMs, string expected)
+    {
+        Assert.Equal(expected, AssistantOrchestrator.Judge(agreement, voicedMs).ToString());
     }
 
     [Fact]

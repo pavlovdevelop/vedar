@@ -30,6 +30,9 @@ if (args.Length == 0)
           bench-wake <fleurs-wav-dir> [limit] [wakeModel] [ctx]   False wake-word activations on real speech without "Ведар"
           bench-wakedetect [wakeModel] [ctx]           Wake-word detection rate on synthetic commands (with 300 ms pre-roll)
           bench-vad [minutes]                          CPU cost of continuous listening (VAD only)
+          bench-bleed                                  Invented words in noise vs the second opinion (real models)
+          bench-voicing <fleurs-wav-dir> [--no-tts]    The voice check on real voices, VEDAR's voice and noises
+          bench-bargein <fleurs-wav-dir> [voices]      The user speaking over VEDAR's voice (simulated rooms)
           bench-rate [repeats]                         Speech duration at each speaking rate (Piper is stochastic: averaged)
           check-bggpt [endpoint] [model]               Connection check exactly as VEDAR does it; key from env VEDAR_BGGPT_KEY
           check-groq [model]                           The same for the Groq backup; key from env VEDAR_GROQ_KEY
@@ -348,6 +351,13 @@ switch (args[0])
         using var stt = new WhisperSpeechRecognizer(settings, resolve, NullLogger<WhisperSpeechRecognizer>.Instance);
         await stt.InitializeAsync(CancellationToken.None);
         await PromptBleedBench.RunAsync(stt, tts);
+        return 0;
+    }
+
+    case "bench-voicing":
+    {
+        using var tts = args.Contains("--no-tts") ? null : await CreateTtsAsync();
+        await VoicingBench.RunAsync(args[1], tts);
         return 0;
     }
 

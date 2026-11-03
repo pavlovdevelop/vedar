@@ -93,6 +93,8 @@ public class IntentRecognitionTests
     [InlineData("Добро утро.", "greeting")]
     [InlineData("Добър вечер!", "greeting")]
     [InlineData("Как си?", "howAreYou")]
+    [InlineData("Къкси.", "howAreYou")]  // what the real main model heard for "Как си?" said by VEDAR's voice
+    [InlineData("Кък си?", "howAreYou")]
     [InlineData("Какси.", "howAreYou")]
     [InlineData("Какво правиш?", "howAreYou")]
     [InlineData("Добре.", "ack")]

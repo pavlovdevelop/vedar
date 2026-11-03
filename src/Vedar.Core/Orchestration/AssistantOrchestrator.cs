@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Vedar.Core.Abstractions;
+using Vedar.Core.Audio;
 using Vedar.Core.Conversation;
 using Vedar.Core.Localization;
 using Vedar.Core.Settings;
@@ -102,6 +103,9 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
     private DateTime _listenStartedUtc;
     /// <summary>"Не те разбрах" was already said to something heard without the wake word; further misses stay quiet.</summary>
     private bool _notUnderstoodSaid;
+
+    /// <summary>"Моля?" was said for an unclear phrase; until VEDAR understands something, it is not said again.</summary>
+    private bool _pardonSaid;
     private Speculation? _speculation;
     private long _speechGeneration;
     /// <summary>The user started to speak while VEDAR spoke or thought (see <see cref="OnUserSpeechStarted"/>).</summary>
@@ -1135,13 +1139,22 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         LogRecognized(reused ? "command (early)" : "command", result);
         _lastUtterance = samples;
         _lastUtteranceFollowUp = followUp;
-        if (!result.IsEmpty && NeedsSecondOpinion(result.Text, prompt) && !await FastModelAgreesAsync(samples, result.Text, ct).ConfigureAwait(false))
+        var unclear = false;
+        if (!result.IsEmpty && NeedsSecondOpinion(result.Text, prompt))
         {
-            // Whisper turns a noise, a breath or the end of a word into a short "word" ("Слъпи.", "Вали.") or into
-            // one of the example commands it is primed with. The fast model, without the examples, does not hear
-            // the same: never run a command, or ask the AI, about something nobody said.
-            _logger.LogInformation("Ignored a short phrase the fast model did not hear the same way (probably a noise).");
-            result = RecognitionResult.Empty(result.AudioDuration, result.ProcessingTime);
+            // Whisper turns a noise, a breath or the end of a word into a short "word" ("Слъпи.", "Ви.") or into one
+            // of the example commands it is primed with. Never run a command, or ask the AI, about something nobody
+            // said: there must be a human voice in the sound, and the fast model (without the examples) must hear
+            // about the same. A voice that neither model understood the same way gets "Моля?".
+            var hearing = await SecondOpinionAsync(samples, result.Text, ct).ConfigureAwait(false);
+            if (hearing != Hearing.Speech)
+            {
+                _logger.LogInformation(hearing == Hearing.Noise
+                    ? "Ignored a short phrase without a human voice in the sound (a noise)."
+                    : "A voice, but the two models heard different words: not acted on.");
+                unclear = hearing == Hearing.Unclear;
+                result = RecognitionResult.Empty(result.AudioDuration, result.ProcessingTime);
+            }
         }
 
         if (overVedar && !result.IsEmpty)
@@ -1160,6 +1173,16 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         {
             if (followUp && _pendingConfirmation is null)
             {
+                if (unclear && !_pardonSaid)
+                {
+                    // Someone spoke but the words were not clear: ask, like a person would — once; if it happens
+                    // again before VEDAR understands anything, it was probably not meant for VEDAR (a television).
+                    _pardonSaid = true;
+                    await SpeakAsync(_loc.Pick("speech.pardon"), ct, remember: false).ConfigureAwait(false);
+                    SetFollowUp(); // quietly: another unclear sound must not start a "Не те разбрах" loop
+                    return;
+                }
+
                 // Probably a noise while VEDAR listened quietly: stay quiet and keep listening.
                 ContinueAttentiveListening();
                 return;
@@ -1178,6 +1201,8 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             ContinueAttentiveListening();
             return;
         }
+
+        _pardonSaid = false; // understood the user: an unclear phrase later may be asked about again
 
         var match = _wakeWord.Match(text);
         if (match.IsMatch)
@@ -1269,24 +1294,54 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         return BulgarianText.Tokenize(match.IsMatch ? match.Request : text).Length <= 3 || IsPromptSentence(text, prompt);
     }
 
+    /// <summary>What the second opinion makes of a short phrase.</summary>
+    internal enum Hearing
+    {
+        /// <summary>Somebody said it: act on it.</summary>
+        Speech,
+
+        /// <summary>A human voice, but the two models heard different words: ask "Моля?".</summary>
+        Unclear,
+
+        /// <summary>No human voice in the sound (breath, clicks, rumble): ignore it quietly.</summary>
+        Noise,
+    }
+
     /// <summary>
-    /// The fast model (without the command examples) hears about the same: real speech. Measured with the real
-    /// models: real short replies agree by 0.52–1.0, noise by 0.0–0.2.
+    /// Milliseconds of voice a short phrase must contain unless both models heard nearly the same. Measured: VEDAR's
+    /// voice saying one short word ≥ 140 ms; random 0.45 s pieces of real speech (395 FLEURS recordings) under 100 ms
+    /// in 5 cases, under 60 ms in 1; breath, clicks, white/pink/brown noise, hum and silence at most 60 ms.
     /// </summary>
-    private async Task<bool> FastModelAgreesAsync(float[] samples, string heard, CancellationToken ct)
+    internal const int MinVoicedMs = 80;
+
+    /// <summary>
+    /// Listens again with the fast model (without the command examples) and looks for a human voice in the sound.
+    /// Measured with the real models: real commands and short replies agree by 0.36–1.0 (one model may garble a
+    /// short word: "Помощ" / "Повъжт"), noises by 0–0.38 ("Слъпи" / "Сържен в тези") and have no voice.
+    /// </summary>
+    private async Task<Hearing> SecondOpinionAsync(float[] samples, string heard, CancellationToken ct)
     {
         var check = await _recognizer.RecognizeAsync(samples, new RecognitionRequest(RecognitionPurpose.WakeWord, RecognitionPrompts.WakeWord), ct).ConfigureAwait(false);
         LogRecognized("second opinion", check);
-        if (check.IsEmpty)
-        {
-            return false;
-        }
-
-        return Agree(heard, check.Text);
+        var agreement = check.IsEmpty ? 0 : Agreement(heard, check.Text);
+        var voicedMs = VoicePresence.VoicedMilliseconds(samples);
+        var hearing = Judge(agreement, voicedMs);
+        _logger.LogDebug("Second opinion: agreement {Agreement:F2}, voice {Voiced} ms → {Hearing}.", agreement, voicedMs, hearing);
+        return hearing;
     }
 
-    /// <summary>Two transcripts of the same audio (without the wake word) are about the same.</summary>
-    internal bool Agree(string main, string fast)
+    /// <summary>
+    /// Both models heard nearly the same: speech (even if the voice check missed it). Otherwise there must be a voice;
+    /// with a voice, about the same letters is speech and different words are unclear.
+    /// </summary>
+    internal static Hearing Judge(double agreement, int voicedMs) =>
+        agreement >= SpeechAgreement.Strong ? Hearing.Speech
+        : voicedMs < MinVoicedMs ? Hearing.Noise
+        : agreement >= SpeechAgreement.Threshold ? Hearing.Speech
+        : Hearing.Unclear;
+
+    /// <summary>How alike two transcripts of the same audio are (without the wake word), 0–1.</summary>
+    internal double Agreement(string main, string fast)
     {
         var m = _wakeWord.Match(main);
         var f = _wakeWord.Match(fast);
@@ -1294,10 +1349,10 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         var b = BulgarianText.NormalizeForMatching(f.IsMatch ? f.Request : fast);
         if (a.Length == 0)
         {
-            return f.IsMatch || b.Length > 0; // the wake word alone: was anything said at all?
+            return f.IsMatch || b.Length > 0 ? 1 : 0; // the wake word alone: was anything said at all?
         }
 
-        return b.Length > 0 && SpeechAgreement.Similarity(a, b) >= SpeechAgreement.Threshold;
+        return b.Length > 0 ? SpeechAgreement.Similarity(a, b) : 0;
     }
 
     /// <param name="attentive">Heard without the wake word while VEDAR listened after speaking (may not be meant for VEDAR).</param>

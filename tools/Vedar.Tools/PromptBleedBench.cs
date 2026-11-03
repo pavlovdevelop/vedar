@@ -120,7 +120,7 @@ internal static class PromptBleedBench
         Console.WriteLine($"Real commands confirmed by the check: {confirmedSaid}/{said}\n");
 
         Console.WriteLine("Short real replies (should be accepted):");
-        foreach (var reply in new[] { "Да.", "Не.", "Вали.", "Защо?", "Кога?", "Добре съм.", "Може би.", "Разбира се.", "Нищо.", "Утре." })
+        foreach (var reply in new[] { "Да.", "Не.", "Вали.", "Защо?", "Кога?", "Добре съм.", "Може би.", "Разбира се.", "Нищо.", "Утре.", "Как си?", "Какво правиш?", "Здравей." })
         {
             var audio = new float[4800].Concat(await Say(reply)).ToArray();
             var main = await stt.RecognizeAsync(audio, new RecognitionRequest(RecognitionPurpose.Command, prompt), CancellationToken.None);
