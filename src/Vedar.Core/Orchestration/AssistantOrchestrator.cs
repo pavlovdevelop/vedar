@@ -1692,6 +1692,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
 
         var provider = _ai.ActiveProviderName;
         var reply = new StringBuilder();
+        var committed = false; // the whole answer is in the conversation (VEDAR may still be reading it)
         SpeechPlaybackQueue? queue = null;
         try
         {
@@ -1738,6 +1739,7 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             }
 
             Conversation.AddAssistant(replyText);
+            committed = true;
             _history?.Append(Conversation.Id, ChatMessage.Assistant(replyText));
             AddTranscript(Speaker.Assistant, replyText);
             LastSpokenText = replyText;
@@ -1781,6 +1783,12 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
             RaiseNotification(UiNotificationKind.Error, message, true);
             await SpeakAsync(message, ct, remember: false).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (committed)
+        {
+            // Interrupted while reading an answer that had fully arrived: it is already in the conversation once.
+            // (It was stored a second time here, and BgGPT rejected the next question: roles must alternate.)
+            throw;
+        }
         catch (OperationCanceledException)
         {
             var partial = reply.ToString().Trim();
@@ -1808,18 +1816,19 @@ public sealed class AssistantOrchestrator : IAsyncDisposable
         }
     }
 
-    /// <summary>The main AI service failed before answering; say that the backup answers (and, once, that it is a cloud service).</summary>
+    /// <summary>
+    /// The main AI service failed before answering and the backup answers. A person would just answer: the switch is
+    /// only logged — unless the user asked to be reminded about cloud services, then it is said once per service.
+    /// </summary>
     private void OnAiFallback(object? sender, AiFallbackEventArgs e)
     {
-        var text = _loc.Format("speech.ai.fallback", e.FailedProvider, e.BackupProvider);
+        _logger.LogInformation("AI fallback: {From} -> {To} ({Reason}).", e.FailedProvider, e.BackupProvider, e.Reason);
         if (e.BackupIsCloud && Settings.Ai.AnnounceCloudUse && _backupCloudNoticeGiven.Add(e.BackupProvider))
         {
-            text += " " + _loc.Format("speech.ai.fallbackCloud", e.BackupProvider);
+            var text = _loc.Format("speech.ai.fallback", e.FailedProvider, e.BackupProvider) + " " + _loc.Format("speech.ai.fallbackCloud", e.BackupProvider);
+            RaiseNotification(UiNotificationKind.Status, text, true);
+            Volatile.Read(ref _aiQueue)?.Enqueue(text);
         }
-
-        _logger.LogInformation("AI fallback: {From} -> {To} ({Reason}).", e.FailedProvider, e.BackupProvider, e.Reason);
-        RaiseNotification(UiNotificationKind.Status, text, true);
-        Volatile.Read(ref _aiQueue)?.Enqueue(text);
     }
 
     /// <summary>

@@ -440,6 +440,36 @@ public sealed class FakeConversationAi : IConversationAi
     }
 #pragma warning restore CS1998
 
+    /// <summary>
+    /// Like the real BgGPT (Gemma 3 chat template): after the system prompt the roles must alternate user /
+    /// assistant, starting and ending with the user, and no message may be empty — otherwise "bad request".
+    /// </summary>
+    public bool StrictRoles { get; set; } = true;
+
+    public static string? RoleProblem(IReadOnlyList<ChatMessage> messages)
+    {
+        var turns = messages.SkipWhile(m => m.Role == ChatRole.System).ToList();
+        if (turns.Count == 0 || turns.Any(m => m.Role == ChatRole.System))
+        {
+            return "System role only at the start, and at least one user message.";
+        }
+
+        for (int i = 0; i < turns.Count; i++)
+        {
+            if (turns[i].Role != (i % 2 == 0 ? ChatRole.User : ChatRole.Assistant))
+            {
+                return "Conversation roles must alternate user/assistant/user/assistant/...";
+            }
+
+            if (string.IsNullOrWhiteSpace(turns[i].Content))
+            {
+                return "Empty message content.";
+            }
+        }
+
+        return turns[^1].Role == ChatRole.User ? null : "The last message must be from the user.";
+    }
+
     public async IAsyncEnumerable<string> StreamReplyAsync(IReadOnlyList<ChatMessage> messages, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var now = Interlocked.Increment(ref _active);
@@ -447,6 +477,11 @@ public sealed class FakeConversationAi : IConversationAi
         try
         {
             lock (Requests) { Requests.Add(messages); }
+            if (StrictRoles && RoleProblem(messages) is { } problem)
+            {
+                throw new AiProviderException(AiErrorKind.InvalidResponse, $"{ProviderName}: bad request. {problem}");
+            }
+
             var script = Scripts.Count > 0 ? Scripts.Dequeue() : () => Tokens(["Добре."], TimeSpan.Zero);
             await foreach (var t in script().WithCancellation(cancellationToken))
             {

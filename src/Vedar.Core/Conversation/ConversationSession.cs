@@ -66,12 +66,30 @@ public sealed class ConversationSession
         }
     }
 
-    /// <summary>System prompt + the most recent messages. The first kept message is always a user message.</summary>
+    /// <summary>
+    /// System prompt + the most recent messages, always in a shape every chat model accepts: user and assistant take
+    /// turns, starting with the user, and no message is empty. BgGPT (Gemma 3) rejects anything else as a
+    /// bad request, which VEDAR used to report as "a reply it could not understand". Two messages of the same side in
+    /// a row are joined.
+    /// </summary>
     public IReadOnlyList<ChatMessage> BuildRequest(string systemPrompt)
     {
         lock (_gate)
         {
-            var recent = _messages.Skip(Math.Max(0, _messages.Count - MaxMessages)).ToList();
+            var turns = new List<ChatMessage>();
+            foreach (var message in _messages.Where(m => m.Role != ChatRole.System && !string.IsNullOrWhiteSpace(m.Content)))
+            {
+                if (turns.Count > 0 && turns[^1].Role == message.Role)
+                {
+                    turns[^1] = turns[^1] with { Content = turns[^1].Content.TrimEnd() + "\n" + message.Content.Trim() };
+                }
+                else
+                {
+                    turns.Add(message);
+                }
+            }
+
+            var recent = turns.Skip(Math.Max(0, turns.Count - MaxMessages)).ToList();
             while (recent.Count > 0 && recent[0].Role != ChatRole.User)
             {
                 recent.RemoveAt(0);

@@ -13,7 +13,7 @@ public sealed class VedarSettings
     /// 3: natural conversation — no beeps by default, VEDAR keeps listening for 30 s after it has spoken.
     /// 4: VEDAR keeps listening for 2 minutes after it has spoken (the user wants it to listen all the time).
     /// </summary>
-    public const int CurrentSchemaVersion = 4;
+    public const int CurrentSchemaVersion = 5;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public GeneralSettings General { get; set; } = new();
@@ -87,6 +87,12 @@ public sealed class VedarSettings
         if (SchemaVersion < 4 && Activation.FollowUpSeconds is 8 or 15 or 30)
         {
             Activation.FollowUpSeconds = ActivationSettings.DefaultFollowUpSeconds;
+        }
+
+        if (SchemaVersion < 5)
+        {
+            // The user asked VEDAR to talk naturally: no "this goes to BgGPT over the internet" in every conversation.
+            Ai.AnnounceCloudUse = false;
         }
 
         Activation.FollowUpSeconds = Math.Clamp(Activation.FollowUpSeconds, 0, ActivationSettings.MaxFollowUpSeconds);
@@ -248,7 +254,8 @@ public sealed class AiSettings
     /// <summary>Messages kept as context in the current conversation.</summary>
     public int MaxHistoryMessages { get; set; } = 20;
     /// <summary>Say that text is sent to a cloud service when a conversation starts.</summary>
-    public bool AnnounceCloudUse { get; set; } = true;
+    /// <summary>Say, in a conversation, that its text goes to a cloud service. Off: it is said once in the setup and in the guide.</summary>
+    public bool AnnounceCloudUse { get; set; }
     /// <summary>Persist conversations locally (DPAPI-encrypted). Off by default.</summary>
     public bool SaveHistory { get; set; }
 }

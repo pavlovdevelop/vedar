@@ -345,9 +345,23 @@ public class OrchestratorTests
     }
 
     [Fact]
-    public async Task Switch_to_the_backup_AI_is_announced_before_its_answer()
+    public async Task Switch_to_the_backup_AI_is_quiet()
     {
         await using var h = new OrchestratorHarness();
+        await h.StartAsync();
+        h.Ai.ReplyAfterFallback("BgGPT", "Groq", "Софийският университет е основан ", "през хиляда осемстотин осемдесет и осма година.");
+
+        await h.Orchestrator.SubmitTextAsync("Кога е основан Софийският университет?");
+        await h.IdleAsync();
+        Assert.Contains("Софийският университет е основан", h.Spoken);
+        Assert.DoesNotContain("Groq", h.Spoken);
+        Assert.DoesNotContain("BgGPT", h.Spoken);
+    }
+
+    [Fact]
+    public async Task Switch_to_the_backup_AI_is_announced_before_its_answer_if_reminders_are_on()
+    {
+        await using var h = new OrchestratorHarness(s => s.Ai.AnnounceCloudUse = true);
         await h.StartAsync();
         h.Ai.ReplyAfterFallback("BgGPT", "Groq", "Софийският университет е основан ", "през хиляда осемстотин осемдесет и осма година.");
 
@@ -362,7 +376,7 @@ public class OrchestratorTests
     }
 
     [Fact]
-    public async Task Unknown_request_is_answered_by_AI_with_streaming_speech_and_cloud_notice()
+    public async Task Unknown_request_is_answered_by_AI_with_streaming_speech_and_no_talk_about_the_service()
     {
         await using var h = new OrchestratorHarness();
         await h.StartAsync();
@@ -371,7 +385,9 @@ public class OrchestratorTests
         await h.Orchestrator.SubmitTextAsync("Разкажи ми нещо за България.");
         await h.IdleAsync();
 
-        Assert.Contains("ще се изпраща като текст към BgGPT", h.Spoken);
+        // The user asked for a natural conversation: no "this goes to BgGPT over the internet".
+        Assert.DoesNotContain("BgGPT", h.Spoken);
+        Assert.DoesNotContain("интернет", h.Spoken);
         Assert.Contains("България е красива страна.", h.Spoken);
         Assert.Contains("Има много планини.", h.Spoken);
         Assert.True(h.Orchestrator.InConversation);
@@ -380,13 +396,39 @@ public class OrchestratorTests
         Assert.Equal(ChatRole.Assistant, messages[1].Role);
         Assert.Equal(ChatRole.System, h.Ai.Requests[0][0].Role);
 
-        // The cloud notice is given once per session.
+        h.Ai.Reply("Да.");
+        await h.Orchestrator.SubmitTextAsync("А кой е най-високият връх?");
+        await h.IdleAsync();
+        Assert.Equal(4, h.Orchestrator.Conversation.Count);
+    }
+
+    [Fact]
+    public async Task The_cloud_reminder_is_said_once_only_if_the_user_turned_it_on()
+    {
+        await using var h = new OrchestratorHarness(s => s.Ai.AnnounceCloudUse = true);
+        await h.StartAsync();
+        h.Ai.Reply("България е красива страна.");
+        await h.Orchestrator.SubmitTextAsync("Разкажи ми нещо за България.");
+        await h.IdleAsync();
+        Assert.Contains("ще се изпраща като текст към BgGPT", h.Spoken);
+
         h.Ai.Reply("Да.");
         h.Synth.Spoken.Clear();
         await h.Orchestrator.SubmitTextAsync("А кой е най-високият връх?");
         await h.IdleAsync();
         Assert.DoesNotContain("през интернет", h.Spoken);
-        Assert.Equal(4, h.Orchestrator.Conversation.Count);
+    }
+
+    [Fact]
+    public void Old_settings_stop_announcing_the_cloud_service_in_conversations()
+    {
+        var old = new VedarSettings { SchemaVersion = 4 };
+        old.Ai.AnnounceCloudUse = true;
+        Assert.False(old.Normalize().Ai.AnnounceCloudUse);
+        Assert.False(new VedarSettings().Ai.AnnounceCloudUse);
+        var chosenLater = new VedarSettings();
+        chosenLater.Ai.AnnounceCloudUse = true; // turned on again by the user in the settings
+        Assert.True(chosenLater.Normalize().Ai.AnnounceCloudUse);
     }
 
     [Fact]
@@ -398,7 +440,7 @@ public class OrchestratorTests
 
         await h.Orchestrator.SubmitTextAsync("Разкажи ми виц.");
         await h.IdleAsync();
-        Assert.Contains("Няма връзка с интернет", h.Spoken);
+        Assert.Contains("Нямам връзка с интернет", h.Spoken);
         Assert.Equal(0, h.Orchestrator.Conversation.Count);
         Assert.Equal(AssistantState.Listening, h.Orchestrator.State); // waits quietly in case the user answers
 
@@ -410,12 +452,13 @@ public class OrchestratorTests
     }
 
     [Theory]
-    [InlineData(AiErrorKind.Unauthorized, "отказа достъп")]
-    [InlineData(AiErrorKind.RateLimited, "претоварен")]
-    [InlineData(AiErrorKind.Timeout, "не отговори навреме")]
-    [InlineData(AiErrorKind.ServerError, "проблем при BgGPT")]
+    [InlineData(AiErrorKind.Unauthorized, "Ключът за BgGPT не се приема")]
+    [InlineData(AiErrorKind.RateLimited, "не мога да отговоря")]
+    [InlineData(AiErrorKind.Timeout, "забави")]
+    [InlineData(AiErrorKind.ServerError, "не е наред")]
+    [InlineData(AiErrorKind.InvalidResponse, "нещо се обърка")]
     [InlineData(AiErrorKind.MissingApiKey, "Няма въведен ключ")]
-    public async Task AI_errors_are_explained_in_bulgarian(AiErrorKind kind, string expected)
+    public async Task AI_errors_are_explained_in_plain_bulgarian(AiErrorKind kind, string expected)
     {
         await using var h = new OrchestratorHarness(s => s.Ai.AnnounceCloudUse = false);
         await h.StartAsync();
@@ -423,6 +466,10 @@ public class OrchestratorTests
         await h.Orchestrator.SubmitTextAsync("Какво е квантова физика?");
         await h.IdleAsync();
         Assert.Contains(expected, h.Spoken);
+        if (kind is not (AiErrorKind.Unauthorized or AiErrorKind.MissingApiKey))
+        {
+            Assert.DoesNotContain("BgGPT", h.Spoken); // only a key the user must fix is named
+        }
     }
 
     [Fact]
@@ -482,15 +529,16 @@ public class OrchestratorTests
     }
 
     [Fact]
-    public async Task Asking_for_ChatGPT_opens_a_BgGPT_conversation_and_says_so()
+    public async Task Asking_for_ChatGPT_opens_a_conversation_without_talk_about_models()
     {
         await using var h = new OrchestratorHarness();
         await h.StartAsync();
         await h.Orchestrator.SubmitTextAsync("Ведар, искам да си говоря с ChatGPT.");
         await h.IdleAsync();
-        Assert.Contains("Отварям разговор с BgGPT", h.Spoken);
-        Assert.Contains("вместо ChatGPT", h.Spoken);
-        Assert.Contains("през интернет", h.Spoken);
+        Assert.Contains("Аз съм Ведар", h.Spoken);
+        Assert.DoesNotContain("BgGPT", h.Spoken);
+        Assert.DoesNotContain("ChatGPT", h.Spoken);
+        Assert.DoesNotContain("интернет", h.Spoken);
         Assert.True(h.Orchestrator.InConversation);
         Assert.Equal(ListeningMode.Command, h.Listener.Mode);
     }

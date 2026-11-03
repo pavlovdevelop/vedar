@@ -46,6 +46,36 @@ public class InterruptionTests
     }
 
     [Fact]
+    public async Task Interrupting_VEDAR_while_it_reads_an_AI_answer_keeps_the_conversation_valid_for_the_AI()
+    {
+        // Reported: VEDAR explains something, the user says "Може ли да те попитам нещо? Сигурен ли си в това?" and
+        // hears "Получих неразбираем отговор от BgGPT". The answer being read was stored twice, and BgGPT (Gemma 3)
+        // rejects a conversation whose roles do not alternate.
+        await using var h = new OrchestratorHarness(s => s.Ai.AnnounceCloudUse = false);
+        h.Output.Instant = false;
+        await h.StartAsync();
+        h.Ai.Reply("Пловдив е един от най-старите градове в Европа. ", "Построен е върху седем хълма край река Марица. ",
+            "Днес в него живеят около триста и петдесет хиляди души, които се гордеят с античния театър.");
+        _ = h.Orchestrator.SubmitTextAsync("Разкажи ми за Пловдив.");
+        await Wait.UntilAsync(() => h.Orchestrator.State == AssistantState.Speaking && h.Listener.InterruptOnSpeech, 3000);
+        await Wait.UntilAsync(() => h.Ai.Requests.Count == 1 && h.Output.Played.Count >= 1, 3000, "the whole answer has arrived and VEDAR reads it");
+
+        h.Recognizer.Responder = (_, _) => "Може ли да те попитам нещо? Сигурен ли си в това?";
+        Assert.True(h.Listener.EmitUserSpeechStart(1.2f));
+        await Wait.UntilAsync(() => h.Output.CancelledCount >= 1, 3000, "VEDAR stops reading");
+        await Wait.UntilAsync(() => h.Orchestrator.State == AssistantState.Listening, 3000);
+        h.Ai.Reply("Да, сигурен съм.");
+        Assert.True(h.Listener.EmitUserSpeechEnd(2.5f));
+
+        await Wait.UntilAsync(() => h.Spoken.Contains("сигурен съм") || h.Spoken.Contains("неразбираем"), 5000);
+        Assert.DoesNotContain("неразбираем", h.Spoken);
+        var second = h.Ai.Requests[1].Where(m => m.Role != ChatRole.System).ToList();
+        Assert.Equal([ChatRole.User, ChatRole.Assistant, ChatRole.User], second.Select(m => m.Role));
+        Assert.StartsWith("Пловдив", second[1].Content);
+        Assert.Null(FakeConversationAi.RoleProblem(h.Ai.Requests[1]));
+    }
+
+    [Fact]
     public async Task A_cough_over_VEDARs_voice_only_lowers_it_for_a_moment()
     {
         await using var h = new OrchestratorHarness();

@@ -3,6 +3,7 @@ using Vedar.Core.Conversation;
 using Vedar.Core.Localization;
 using Vedar.Core.State;
 using Vedar.Core.Text;
+using Vedar.Tests.Support;
 
 namespace Vedar.Tests.Core;
 
@@ -133,6 +134,23 @@ public class ConversationSessionTests
     }
 
     [Fact]
+    public void The_request_always_alternates_even_if_the_same_side_was_stored_twice()
+    {
+        var s = new ConversationSession();
+        s.AddUser("Разкажи ми за Пловдив.");
+        s.AddAssistant("Пловдив е стар град.");
+        s.AddAssistant("Пловдив е стар град. …"); // what an interrupted answer used to add
+        s.AddAssistant("   ");
+        s.AddUser("Може ли да те попитам нещо?");
+        s.AddUser("Сигурен ли си в това?");
+
+        var request = s.BuildRequest("системен");
+        Assert.Equal([ChatRole.System, ChatRole.User, ChatRole.Assistant, ChatRole.User], request.Select(m => m.Role));
+        Assert.Equal("Може ли да те попитам нещо?\nСигурен ли си в това?", request[3].Content);
+        Assert.Null(FakeConversationAi.RoleProblem(request));
+    }
+
+    [Fact]
     public void RemoveLastUserMessage_only_removes_trailing_user_message()
     {
         var s = new ConversationSession();
@@ -157,6 +175,8 @@ public class ConversationSessionTests
         Assert.Contains("не можеш да изпълняваш команди", prompt);
         Assert.Contains("първи ноември", prompt);
         Assert.Contains("чута грешно", prompt); // a garbled phrase is asked about, not answered with a guess
+        Assert.Contains("Не говори сам за технологията зад теб", prompt); // natural: no talk about models or the internet
+        Assert.Contains("Само ако те попитат директно", prompt); // but honest when asked
     }
 }
 
