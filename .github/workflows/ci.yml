@@ -44,8 +44,13 @@ jobs:
     name: Windows (UI Automation, DPAPI, registry, installer)
     runs-on: windows-2025
     timeout-minutes: 75
+    permissions:
+      contents: write # publish the installer to the "latest-build" pre-release
+      actions: write # delete the installer artifacts of older runs
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
@@ -63,6 +68,7 @@ jobs:
         shell: pwsh
         run: ./build/publish.ps1
       - name: Test (net10.0)
+        id: tests
         run: dotnet test --project tests/Vedar.Tests/Vedar.Tests.csproj -c Release -f net10.0 --no-build
       - name: Test (net10.0-windows — WPF keyboard/UIA, DPAPI, registry, FlaUI end-to-end)
         id: wintests
@@ -72,20 +78,73 @@ jobs:
         shell: pwsh
         run: ./build/create-installer.ps1
       - name: Installer end-to-end test (install, start, exit, uninstall)
+        id: installertest
         if: ${{ !cancelled() }}
         shell: pwsh
         run: ./build/test-installer.ps1
-      - name: Upload installer
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: VEDAR-Setup-v0.1.0-x64
-          path: |
-            dist/VEDAR-Setup-v0.1.0-x64.exe
-            dist/VEDAR-Setup-v0.1.0-x64.exe.sha256
-          retention-days: 14
+      # The installer (~350 MB) is published as a GitHub Release, not as an Actions artifact: release files
+      # do not count toward the Actions storage quota (500 MB on GitHub Free), artifacts do. One artifact per
+      # run kept for 14 days filled the quota within three days (November 2026).
+      - name: Publish installer to the "latest-build" pre-release
+        id: publish
+        if: ${{ !cancelled() && steps.installertest.outcome == 'success' && github.event_name != 'pull_request' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TESTS_PASSED: ${{ steps.tests.outcome == 'success' && steps.wintests.outcome == 'success' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'latest-build'
+          $files = @(Get-ChildItem -LiteralPath dist -File -Filter 'VEDAR-Setup-*' | ForEach-Object { $_.FullName })
+          if (-not ($files -like '*.exe') -or -not ($files -like '*.sha256')) { throw "Installer or checksum missing in dist: $($files -join ', ')" }
+          $short = $env:GITHUB_SHA.Substring(0, 7)
+          $tests = if ($env:TESTS_PASSED -eq 'true') { 'Всички тестове в CI минаха.' } else { 'ВНИМАНИЕ: някои тестове в CI не минаха; инсталаторът е проверен само с теста за инсталиране.' }
+          $notes = @(
+            'Инсталатор от последното изпълнение на CI (заменя се при всяко ново). Не е официално издание.'
+            ''
+            "* Клон: ``$env:GITHUB_REF_NAME``, commit ``$short``"
+            "* CI: $env:RUN_URL"
+            "* $tests"
+            ''
+            'Проверка на контролната сума: виж INSTALLATION.md.'
+          ) -join "`n"
+          $notesFile = Join-Path $env:RUNNER_TEMP 'latest-build-notes.md'
+          Set-Content -LiteralPath $notesFile -Value $notes -Encoding utf8NoBOM
+
+          # Replace the previous build: delete the release and its tag (both may be missing), then recreate
+          # them on this commit.
+          $ErrorActionPreference = 'Continue'
+          gh release delete $tag --yes --cleanup-tag 2>&1 | Out-Host
+          gh api -X DELETE "repos/$env:GH_REPO/git/refs/tags/$tag" 2>&1 | Out-Null
+          $ErrorActionPreference = 'Stop'
+
+          gh release create $tag $files --target $env:GITHUB_SHA --prerelease --title "VEDAR – последна сборка ($short)" --notes-file $notesFile
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE" }
+          Write-Host "Published: $env:GITHUB_SERVER_URL/$env:GH_REPO/releases/tag/$tag"
+      - name: Delete installer artifacts of older runs (now on the release instead)
+        if: ${{ !cancelled() && steps.publish.outcome == 'success' }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $lines = @(gh api --paginate "repos/$env:GH_REPO/actions/artifacts?per_page=100" --jq '.artifacts[] | [.id, .name] | @tsv')
+          if ($LASTEXITCODE -ne 0) { Write-Host "::warning::Could not list artifacts (exit code $LASTEXITCODE)."; exit 0 }
+          $deleted = 0
+          foreach ($line in $lines) {
+            $id, $name = $line -split "`t", 2
+            if ($name -notlike 'VEDAR-Setup-*') { continue }
+            gh api -X DELETE "repos/$env:GH_REPO/actions/artifacts/$id"
+            if ($LASTEXITCODE -eq 0) { $deleted++ } else { Write-Host "::warning::Could not delete artifact $id ($name)." }
+          }
+          Write-Host "Deleted $deleted old installer artifact(s)."
+          exit 0
       - name: Upload test results and logs
         if: always()
+        continue-on-error: true # small; must not fail the job if the storage quota blocks uploads
         uses: actions/upload-artifact@v4
         with:
           name: windows-logs
@@ -93,4 +152,4 @@ jobs:
             tests/Vedar.Tests/bin/Release/**/TestResults/**
             ${{ runner.temp }}/vedar-setup.log
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 7

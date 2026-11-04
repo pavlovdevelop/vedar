@@ -99,7 +99,8 @@ VEDAR-Setup-v0.1.0-x64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER
 
 ## Проверка на целостта на инсталатора
 
-До инсталатора има файл `VEDAR-Setup-v0.1.0-x64.exe.sha256`. Проверка в PowerShell:
+До инсталатора има файл `VEDAR-Setup-v0.1.0-x64.exe.sha256` (в изданието `latest-build` в GitHub
+Releases двата файла са един до друг). Проверка в PowerShell:
 
 ```powershell
 Get-FileHash .\VEDAR-Setup-v0.1.0-x64.exe -Algorithm SHA256
